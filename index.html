@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="오목 훈수">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon.png">
+<title>오목 훈수 (스크린샷)</title>
+<style>
+body{font-family:-apple-system,sans-serif;background:#121212;color:#fff;margin:0;padding:16px;text-align:center}
+button,select{font-size:17px;border-radius:10px;border:none;padding:14px 20px;font-weight:bold}
+#pick{background:#007AFF;color:#fff;width:100%;max-width:420px}
+select{background:#333;color:#fff;margin-top:10px}
+#res{margin:16px 0 8px;font-size:22px;font-weight:bold;color:#ff3b30;min-height:30px}
+#info{font-size:13px;color:#888;min-height:18px}
+canvas{width:100%;max-width:420px;border-radius:10px;margin-top:10px;background:#000}
+details{margin-top:14px;color:#aaa;font-size:14px}label{display:block;margin:6px}
+</style>
+</head>
+<body>
+<h2>오목 훈수</h2>
+<input type="file" id="f" accept="image/*" hidden>
+<button id="pick">📷 스크린샷 선택</button><br>
+<select id="side"><option value="0">둘 차례: 자동</option><option value="1">내 돌: 흑</option><option value="2">내 돌: 백</option></select>
+<div id="res">게임 화면 스크린샷을 선택하세요</div>
+<div id="info"></div>
+<canvas id="cv" width="10" height="10"></canvas>
+<details><summary>인식이 이상하면 (민감도)</summary>
+<label>흑 민감도 <input type="range" id="bk" min="10" max="60" value="20"></label>
+<label>백 민감도 <input type="range" id="wk" min="20" max="120" value="70"></label></details>
+
+<script>
+const SIZE = 15;
+
+// ---------- 1. 바둑판 자동 인식 (격자선 15줄 등간격 + 교차점 2D 검증) ----------
+function detectBoard(g, W, H) {
+  const Lx = (y, x) => Math.abs(2 * g[y * W + x] - g[y * W + x - 2] - g[y * W + x + 2]);
+  const Ly = (y, x) => Math.abs(2 * g[y * W + x] - g[(y - 2) * W + x] - g[(y + 2) * W + x]);
+  const Px = new Float32Array(W), Py = new Float32Array(H);
+  for (let y = 2; y < H - 2; y += 2) for (let x = 2; x < W - 2; x++) Px[x] += Lx(y, x);
+  for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x += 2) Py[y] += Ly(y, x);
+  const prep = P => {
+    const q = new Float32Array(P.length);
+    for (let i = 1; i < P.length - 1; i++) q[i] = Math.sqrt(Math.max(P[i - 1], P[i], P[i + 1]));
+    const cap = 1.25 * Array.from(q).sort((a, b) => b - a)[20];
+    return q.map(v => Math.min(v, cap));
+  };
+  const search = (Q, smin, smax) => {
+    let best = { sc: -1, x0: 0, s: smin };
+    for (let s = smin; s <= smax; s += 0.1) {
+      const m0 = Math.floor(Q.length - 2 - 14 * s);
+      for (let x0 = 0; x0 <= m0; x0++) {
+        let sc = 0; for (let i = 0; i < 15; i++) sc += Q[Math.round(x0 + i * s)];
+        if (sc > best.sc) best = { sc, x0, s };
+      }
+    }
+    return best;
+  };
+  const refine = (P, x0, s) => {
+    let sx = 0, sxi = 0;
+    for (let i = 0; i < 15; i++) {
+      let c = Math.min(Math.max(Math.round(x0 + i * s), 3), P.length - 4), bx = c, bv = -1;
+      for (let k = -3; k <= 3; k++) if (P[c + k] > bv) { bv = P[c + k]; bx = c + k; }
+      sx += bx; sxi += i * bx;
+    }
+    const b = (15 * sxi - 105 * sx) / (15 * 1015 - 105 * 105);
+    return { a: (sx - b * 105) / 15, b };
+  };
+  const score = (a, b, c, e) => {
+    const o = Math.max(3, Math.round(b * 0.25)); let t = 0;
+    for (let j = 0; j < 15; j++) {
+      const y = Math.round(c + j * e);
+      for (let i = 0; i < 15; i++) {
+        const x = Math.round(a + i * b);
+        if (x < o + 4 || y < o + 4 || x >= W - o - 4 || y >= H - o - 4) return -1;
+        let v = 0, h = 0;
+        for (const sg of [-1, 1]) for (let k = -1; k <= 1; k++) { v = Math.max(v, Lx(y + sg * o, x + k)); h = Math.max(h, Ly(y + k, x + sg * o)); }
+        t += Math.min(v, h);
+      }
+    }
+    return t;
+  };
+  const sx = search(prep(Px), 10, Math.min(200, W / 14)), X = refine(Px, sx.x0, sx.s);
+  const sy = search(prep(Py), X.b * 0.96, X.b * 1.04), Y = refine(Py, sy.x0, sy.s);
+  let best = null;
+  for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) {
+    const a = refine(Px, X.a + dx * X.b, X.b), c = refine(Py, Y.a + dy * Y.b, Y.b), sc = score(a.a, a.b, c.a, c.b);
+    if (!best || sc > best.sc) best = { sc, ax: a.a, bx: a.b, ay: c.a, by: c.b };
+  }
+  return best && best.sc / 225 > 40 ? best : null;
+}
+
+// ---------- 2. 돌 인식: 교차점 중심에서 대각선으로 떨어진 4곳의 밝기 (마지막 수 표시·격자선 회피) ----------
+function readStones(gr, W, b, bk, wk) {
+  const h = Math.max(1, Math.round(b.bx * 0.04)), off = Math.round(b.bx * 0.22), vals = [];
+  const patch = (x, y) => { let s = 0, n = 0; for (let yy = y - h; yy <= y + h; yy++) for (let xx = x - h; xx <= x + h; xx++) { s += gr[yy * W + xx]; n++; } return s / n; };
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
+    const x = Math.round(b.ax + c * b.bx), y = Math.round(b.ay + r * b.by);
+    const q = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sy]) => patch(x + sx * off, y + sy * off)).sort((p, q2) => p - q2);
+    vals.push((q[1] + q[2]) / 2);
+  }
+  const med = [...vals].sort((p, q) => p - q)[vals.length >> 1];
+  const board = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+  vals.forEach((v, i) => { board[i / SIZE | 0][i % SIZE] = v < med - bk ? 1 : v > med + wk ? 2 : 0; });
+  return board;
+}
+
+// ---------- 3. 추천 수 (5칸 윈도우 패턴 점수, 띈 3/4 및 4-3·3-3 보너스) ----------
+const W5 = [0, 1, 10, 100, 1500, 1e6], DIRS = [[1, 0], [0, 1], [1, 1], [1, -1]];
+function evalCell(board, r, c, me, op) {
+  let s = 0, fours = 0, threes = 0;
+  for (const [dr, dc] of DIRS) {
+    let best = 0, n3 = 0;
+    for (let st = -4; st <= 0; st++) {
+      let own = 1, ok = true;
+      for (let k = st; k <= st + 4; k++) {
+        if (k === 0) continue;
+        const nr = r + dr * k, nc = c + dc * k;
+        if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE || board[nr][nc] === op) { ok = false; break; }
+        if (board[nr][nc] === me) own++;
+      }
+      if (!ok) continue;
+      s += W5[own]; if (own > best) best = own; if (own === 3) n3++;
+    }
+    if (best === 4) fours++; else if (best === 3 && n3 >= 2) threes++;
+  }
+  if (fours >= 2 || (fours && threes)) s += 20000; else if (threes >= 2) s += 3000;
+  return s;
+}
+function bestMove(board, me) {
+  const op = 3 - me;
+  if (board.every(row => row.every(v => !v))) return { r: 7, c: 7 };
+  const near = (r, c) => { for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) { const a = r + i, b = c + j; if (a >= 0 && a < SIZE && b >= 0 && b < SIZE && board[a][b]) return true; } return false; };
+  let best = null, bs = -1;
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
+    if (board[r][c] || !near(r, c)) continue;
+    const a = evalCell(board, r, c, me, op);
+    if (a >= 1e6) return { r, c };
+    const t = a + evalCell(board, r, c, op, me) * 1.05 + (14 - Math.abs(r - 7) - Math.abs(c - 7)) * 0.2;
+    if (t > bs) { bs = t; best = { r, c }; }
+  }
+  return best;
+}
+
+// ---------- 4. 전체 처리 ----------
+function analyze(d, W, H, forced, bk, wk) {
+  const g = new Float32Array(W * H), gr = new Float32Array(W * H);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) { const s = d[i] + d[i + 1] + d[i + 2]; g[j] = s; gr[j] = s / 3; }
+  const box = detectBoard(g, W, H);
+  if (!box) return { msg: '바둑판을 찾지 못했어요. 게임 화면 전체가 나온 스크린샷을 선택하세요.' };
+  const board = readStones(gr, W, box, bk, wk);
+  let bc = 0, wc = 0; board.forEach(row => row.forEach(v => { if (v === 1) bc++; else if (v === 2) wc++; }));
+  const info = `흑 ${bc} · 백 ${wc}`;
+  const diff = bc - wc;
+  if (diff < 0 || diff > 1) return { msg: '돌 인식이 불안정해요. 민감도를 조정하거나 다시 찍어 주세요.', info, box };
+  const me = forced || (diff === 0 ? 1 : 2);
+  const mv = bestMove(board, me);
+  return { msg: `${me === 1 ? '흑' : '백'} 차례: 위에서 ${mv.r + 1}번째, 왼쪽에서 ${mv.c + 1}번째 줄`, info, box, mv, board };
+}
+
+// ---------- UI ----------
+if (typeof document !== 'undefined') {
+  const $ = id => document.getElementById(id), cv = $('cv'), cx = cv.getContext('2d', { willReadFrequently: true });
+  let last = null;
+  const run = () => {
+    if (!last) return;
+    const { W, H, data } = last;
+    $('res').innerText = '분석 중...';
+    setTimeout(() => {
+      const r = analyze(data, W, H, +$('side').value, +$('bk').value, +$('wk').value);
+      $('res').innerText = r.msg; $('info').innerText = r.info || '';
+      cx.putImageData(new ImageData(new Uint8ClampedArray(data), W, H), 0, 0);
+      if (r.mv) {
+        const x = r.box.ax + r.mv.c * r.box.bx, y = r.box.ay + r.mv.r * r.box.by, R = r.box.bx * 0.45;
+        cx.strokeStyle = '#ff2030'; cx.lineWidth = Math.max(4, r.box.bx * 0.1);
+        cx.beginPath(); cx.arc(x, y, R, 0, 7); cx.stroke();
+        cx.fillStyle = 'rgba(255,32,48,.35)'; cx.fill();
+      }
+    }, 30);
+  };
+  $('pick').onclick = () => $('f').click();
+  $('f').onchange = e => {
+    const file = e.target.files[0]; if (!file) return;
+    const img = new Image();
+    img.onload = () => {
+      cv.width = img.naturalWidth; cv.height = img.naturalHeight; cx.drawImage(img, 0, 0);
+      const im = cx.getImageData(0, 0, cv.width, cv.height);
+      last = { W: cv.width, H: cv.height, data: im.data };
+      URL.revokeObjectURL(img.src); run();
+    };
+    img.src = URL.createObjectURL(file); e.target.value = '';
+  };
+  ['side', 'bk', 'wk'].forEach(id => $(id).onchange = run);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
