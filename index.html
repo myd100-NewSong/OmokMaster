@@ -2,28 +2,29 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>오목 AI</title>
+<title>오목 AI - 실시간 훈수기</title>
 <style>
-body{font-family:-apple-system,sans-serif;text-align:center;background:#121212;color:#fff;margin:0;padding:15px}
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;background:#121212;color:#fff;margin:0;padding:15px}
 .container{position:relative;display:inline-block;margin-top:10px;user-select:none}
 video{outline:2px solid #333;border-radius:8px;max-height:70vh;background:#000;display:block}
 canvas#overlay{position:absolute;top:0;left:0;cursor:crosshair}
 .controls{margin-bottom:8px;display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap}
-button{padding:9px 16px;font-size:14px;cursor:pointer;border-radius:6px;border:none;font-weight:bold}
+button{padding:9px 16px;font-size:14px;cursor:pointer;border-radius:6px;border:none;font-weight:bold;transition:transform 0.1s}
+button:active{transform:scale(0.96)}
 label{font-size:12px;color:#aaa}
-#status{margin-top:8px;color:#34c759;font-size:16px;font-weight:bold;min-height:24px}
+#status{margin-top:8px;color:#34c759;font-size:17px;font-weight:bold;min-height:26px}
 #info{font-size:12px;color:#777;min-height:16px}
-.my-turn{color:#ff3b30!important;font-size:20px!important;text-shadow:0 0 12px rgba(255,59,48,.7)}
+.my-turn{color:#ff3b30!important;font-size:21px!important;text-shadow:0 0 14px rgba(255,59,48,.8)}
 .opp-turn{color:#8e8e93!important}
-.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:999;justify-content:center;align-items:center}
-.modal-box{background:#222;border:2px solid #007AFF;border-radius:12px;padding:25px 30px}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.8);z-index:999;justify-content:center;align-items:center}
+.modal-box{background:#222;border:2px solid #007AFF;border-radius:12px;padding:25px 30px;box-shadow:0 0 30px rgba(0,122,255,0.4)}
 .modal-box h2{margin:0 0 10px}.modal-box p{margin:0 0 20px;color:#aaa;font-size:14px}
 .modal-btns{display:flex;gap:15px;justify-content:center}
-.m-btn{padding:14px 22px;font-size:16px;border-radius:8px;border:2px solid #555}
+.m-btn{padding:14px 22px;font-size:16px;border-radius:8px;border:2px solid #555;cursor:pointer;font-weight:bold}
 </style>
 </head>
 <body>
-<h1>오목 AI</h1>
+<h1>오목 AI 실시간 승리 훈수기</h1>
 <div class="controls">
   <button id="startBtn" style="background:#007AFF;color:#fff">1. 미러링 창 선택</button>
   <button id="reselectBtn" style="background:#333;color:#fff;display:none"></button>
@@ -31,7 +32,7 @@ label{font-size:12px;color:#aaa}
   <button id="resetBtn" style="background:#444;color:#fff">영역 다시 그리기</button>
   <label>흑 민감도 <input type="range" id="bk" min="10" max="60" value="20"></label>
   <label>백 민감도 <input type="range" id="wk" min="20" max="120" value="70"></label>
-  <label title="밝은 판에서 흰 돌 인식용 (작을수록 민감)">백 색차 <input type="range" id="kc" min="3" max="20" value="8"></label>
+  <label title="밝은 판에서 흰 돌 인식용">백 색차 <input type="range" id="kc" min="3" max="20" value="8"></label>
 </div>
 <div id="status">준비 완료! 파란 버튼을 눌러주세요.</div>
 <div id="info"></div>
@@ -41,9 +42,9 @@ label{font-size:12px;color:#aaa}
 <div id="stoneModal" class="modal-overlay">
   <div class="modal-box">
     <h2>당신은 어떤 돌인가요?</h2>
-    <p>선택한 돌 기준으로 내 차례를 판단하고 수를 추천합니다.</p>
+    <p>선택한 돌 기준으로 턴을 계산하고 최적의 승리 착수점을 안내합니다.</p>
     <div class="modal-btns">
-      <button id="chooseBlack" class="m-btn" style="background:#000;color:#fff">⚫️ 흑돌 (선공)</button>
+      <button id="chooseBlack" class="m-btn" style="background:#000;color:#fff;border-color:#777">⚫️ 흑돌 (선공)</button>
       <button id="chooseWhite" class="m-btn" style="background:#fff;color:#000">⚪️ 백돌 (후공)</button>
     </div>
   </div>
@@ -73,7 +74,7 @@ $('chooseWhite').onclick = () => selectStone(2);
 $('reselectBtn').onclick = () => modal.style.display = 'flex';
 $('resetBtn').onclick = () => {
   boardRect = boardNorm = null; isMatched = false; bestMove = null; pending = '';
-  say('돋보기를 보며 맨 바깥 격자선의 [좌상단 교차점]에서 [우하단 교차점]까지 드래그하세요!');
+  say('바둑판의 [좌상단 교차점]에서 [우하단 교차점]까지 드래그하세요!');
 };
 
 $('startBtn').onclick = async () => {
@@ -97,24 +98,22 @@ canvas.onmouseup = () => {
   if (w > 50 && h > 50) setBoardRect({ x, y, w, h });
 };
 
-
 function setBoardRect(rc) {
   boardRect = rc; isMatched = true; pending = '';
   boardNorm = { x: rc.x / canvas.width, y: rc.y / canvas.height, w: rc.w / canvas.width, h: rc.h / canvas.height };
   if (!myColor) modal.style.display = 'flex'; else say('✅ 영역 설정 완료');
 }
+
 function autoBoard() {
   if (!video.videoWidth) return;
   canvas.width = video.clientWidth; canvas.height = video.clientHeight;
   const r = detectBoard();
-  if (!r) { say('⚠️ 자동 인식 실패 — [영역 다시 그리기]로 직접 지정하세요 (돋보기 지원)'); return; }
+  if (!r) { say('⚠️ 자동 인식 실패 — [영역 다시 그리기]로 직접 지정하세요'); return; }
   const kx = video.videoWidth / video.clientWidth, ky = video.videoHeight / video.clientHeight;
   setBoardRect({ x: r.x / kx, y: r.y / ky, w: r.w / kx, h: r.h / ky });
 }
 $('autoBtn').onclick = autoBoard;
 
-// 자동 인식: 격자선(밝기 능선)의 가로/세로 프로파일에서 '15개 등간격 선'을 찾고,
-// 교차점마다 가로·세로 선이 모두 지나가는지(2D 검증)로 패널 테두리와 실제 격자를 구분
 function detectBoard() {
   const W = video.videoWidth, H = video.videoHeight;
   hc.width = W; hc.height = H; hx.drawImage(video, 0, 0);
@@ -177,16 +176,15 @@ function detectBoard() {
 }
 
 function getCoord(r, c, rect = boardRect) {
+  if (!rect) return { x: 0, y: 0 };
   return { x: rect.x + c * rect.w / (SIZE - 1), y: rect.y + r * rect.h / (SIZE - 1) };
 }
 
-// 돌 인식: 판 전체의 밝기 중앙값(=빈 교차점 기준)과 비교하는 상대 판별 (다크/라이트 판 모두 대응)
 function processGame() {
   if (!isMatched || !myColor || !video.videoWidth) return;
   if (hc.width !== video.videoWidth || hc.height !== video.videoHeight) { hc.width = video.videoWidth; hc.height = video.videoHeight; }
   hx.drawImage(video, 0, 0);
   const sx = video.videoWidth / video.clientWidth, sy = video.videoHeight / video.clientHeight;
-  // 교차점 중앙(격자선·마지막 수 표시 마커 위치)을 피해, 중심에서 대각선으로 떨어진 4곳을 샘플링
   const stepPx = boardRect.w / (SIZE - 1) * sx, h = Math.max(1, Math.round(stepPx * 0.04)), off = Math.round(stepPx * 0.22), m = off + h;
   const vals = [];
   for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
@@ -197,46 +195,49 @@ function processGame() {
       const d = hx.getImageData(px + ax * off - h, py + ay * off - h, 2 * h + 1, 2 * h + 1).data;
       let sr = 0, sg = 0, sb = 0, n = d.length / 4;
       for (let i = 0; i < d.length; i += 4) { sr += d[i]; sg += d[i + 1]; sb += d[i + 2]; }
-      q.push([(sr + sg + sb) / (3 * n), (sr - sb) / n]); // [밝기, 색차(R-B): 베이지 판은 +, 흰 돌은 0 근처]
+      q.push([(sr + sg + sb) / (3 * n), (sr - sb) / n]);
     }
     q.sort((a, b) => a[0] - b[0]);
-    vals.push([(q[1][0] + q[2][0]) / 2, (q[1][1] + q[2][1]) / 2]); // 중간 두 값 평균: 하이라이트 같은 튀는 값 제거
+    vals.push([(q[1][0] + q[2][0]) / 2, (q[1][1] + q[2][1]) / 2]);
   }
   const ok = vals.filter(v => v !== null);
+  if (!ok.length) return;
   const med = ok.map(v => v[0]).sort((a, b) => a - b)[ok.length >> 1];
   const medC = ok.map(v => v[1]).sort((a, b) => a - b)[ok.length >> 1];
   const kb = +$('bk').value, kw = +$('wk').value, kc = +$('kc').value;
-  // 흑: 판보다 어두움 / 백: 판보다 훨씬 밝거나(어두운 판), 판의 색감과 다름(밝은 베이지 판)
+
   const raw = vals.map(v => v === null ? 0 : v[0] < med - kb ? 1 : (v[0] > med + kw || (Math.abs(v[1] - medC) > kc && v[0] > med - 25)) ? 2 : 0);
   const sig = raw.join('');
-  if (sig !== pending) { pending = sig; return; } // 연속 2회 같은 결과일 때만 반영 (애니메이션 오인식 방지)
+  if (sig !== pending) { pending = sig; return; }
   let bc = 0, wc = 0;
   raw.forEach((v, i) => { board[i / SIZE | 0][i % SIZE] = v; if (v === 1) bc++; else if (v === 2) wc++; });
-  info.style.color = ''; info.innerText = `빈칸 기준 밝기 ${med.toFixed(0)} · 흑 ${bc} · 백 ${wc}`;
+  info.innerText = `판 위 돌: 흑 ${bc}개, 백 ${wc}개`;
 
   const diff = bc - wc;
-  const valid = diff === 0 || diff === 1;            // 정상: 흑이 백과 같거나 1개 많음
-  // 개수가 맞지 않으면 돌 인식 오차로 보고, 추천 자리를 숨기지 않고 '참고용'으로 계속 표시
+  const valid = (diff === 0 || diff === 1);
   isMyTurn = valid ? (myColor === 1 ? diff === 0 : diff === 1) : true;
   if (isMyTurn) {
     const key = sig + myColor;
     if (key !== moveKey) { moveKey = key; bestMove = computeMove(board, myColor); }
     const m = bestMove;
-    const where = m ? `위에서 ${m.r + 1}번째, 왼쪽에서 ${m.c + 1}번째에 두세요!${m.why ? ' — ' + m.why : ''}` : '둘 곳을 찾지 못했어요';
-    say(valid ? `⚡️ ${where}` : `⚠️ 돌 인식 오차(흑 ${bc} · 백 ${wc}) — 참고용: ${where}`, 'my-turn');
+    const where = m ? `[세로 ${m.r + 1}번째 줄, 가로 ${m.c + 1}번째 줄]에 두세요!${m.why ? ' (' + m.why + ')' : ''}` : '둘 곳을 찾는 중...';
+    say(valid ? `⚡️ 내 턴! ${where}` : `⚠️ 인식 확인 중: ${where}`, 'my-turn');
   } else {
     bestMove = null; moveKey = '';
-    say('⏳ 상대방이 생각 중입니다...', 'opp-turn');
+    say('⏳ 상대방이 생각 중입니다... (돌을 놓으면 즉시 표시)', 'opp-turn');
   }
 }
 
-function drawFrame() {
+// ------------------- [가짜 돌 없이 조준선만 표시하는 렌더링] -------------------
+function renderLoop() {
   if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
     canvas.width = video.clientWidth; canvas.height = video.clientHeight;
     if (boardNorm) boardRect = { x: boardNorm.x * canvas.width, y: boardNorm.y * canvas.height, w: boardNorm.w * canvas.width, h: boardNorm.h * canvas.height };
   }
   canvas.style.cursor = 'crosshair';
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 드래그 중 박스
   if (isDragging && dragStart && dragEnd) {
     const rc = { x: Math.min(dragStart.x, dragEnd.x), y: Math.min(dragStart.y, dragEnd.y), w: Math.abs(dragEnd.x - dragStart.x), h: Math.abs(dragEnd.y - dragStart.y) };
     ctx.strokeStyle = '#007AFF'; ctx.lineWidth = 2; ctx.strokeRect(rc.x, rc.y, rc.w, rc.h);
@@ -246,53 +247,121 @@ function drawFrame() {
       ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.moveTo(c.x, c.y); ctx.lineTo(d.x, d.y); ctx.stroke();
     }
   }
+
+  // 매칭 완료 상태
   if (boardRect && isMatched) {
-    const rad = boardRect.w / (SIZE - 1) * 0.3;
+    const rad = (boardRect.w / (SIZE - 1)) * 0.38;
+
+    // 1. [진짜 놓여진 돌만 표시] (가짜 돌 없음!)
     for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
       const p = getCoord(r, c), v = board[r][c];
       ctx.beginPath();
-      if (v) { ctx.fillStyle = v === 1 ? '#000' : '#fff'; ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 2; ctx.arc(p.x, p.y, rad, 0, 7); ctx.fill(); ctx.stroke(); }
-      else { ctx.fillStyle = 'rgba(0,255,120,.5)'; ctx.arc(p.x, p.y, 2, 0, 7); ctx.fill(); }
-    }
-    ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
-    for (let i = 0; i < SIZE; i++) {
-      const t = getCoord(0, i), l = getCoord(i, 0);
-      ctx.fillText(i + 1, t.x, t.y - 8); ctx.fillText(i + 1, l.x - 12, l.y + 4);
-    }
-    if (bestMove && isMyTurn) {
-      const p = getCoord(bestMove.r, bestMove.c), pulse = (Math.sin(Date.now() / 180) + 1) / 2, a = .4 + pulse * .6;
-      ctx.strokeStyle = `rgba(255,30,30,${a})`; ctx.lineWidth = 3.5;
-      ctx.beginPath(); ctx.arc(p.x, p.y, rad + 2 + pulse * 12, 0, 7); ctx.stroke();
-      ctx.fillStyle = '#ff0033'; ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, 7); ctx.fill();
-      ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#ffeb3b'; ctx.textAlign = 'left';
-      ctx.fillText(`(${bestMove.r + 1}, ${bestMove.c + 1})`, p.x + rad + 14, p.y - rad - 6);
-      // 마우스가 추천 자리(한 칸 범위)에 올라가면 바둑판 위에 "OK" 글자 표시
-      if (hover && Math.hypot(hover.x - p.x, hover.y - p.y) < boardRect.w / (SIZE - 1) * 0.5) {
-        ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.lineWidth = 5; ctx.strokeStyle = '#000'; ctx.strokeText('OK', p.x, p.y);
-        ctx.fillStyle = '#34ff7a'; ctx.fillText('OK', p.x, p.y);
-        ctx.textBaseline = 'alphabetic'; canvas.style.cursor = 'pointer';
+      if (v) {
+        ctx.fillStyle = v === 1 ? '#111' : '#fff';
+        ctx.strokeStyle = '#00ffff';
+        ctx.lineWidth = 2.5;
+        ctx.arc(p.x, p.y, rad, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+      } else {
+        ctx.fillStyle = 'rgba(0, 255, 120, 0.4)';
+        ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
-  }
-  if (hover && !isMatched && video.videoWidth) { // 돋보기
-    const R = 70, Z = 4, kx = video.videoWidth / video.clientWidth, ky = video.videoHeight / video.clientHeight;
-    const cx = hover.x < canvas.width / 2 ? hover.x + R + 30 : hover.x - R - 30;
-    const cy = hover.y > R + 40 ? hover.y - R - 30 : hover.y + R + 30;
-    ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.clip();
-    ctx.fillStyle = '#000'; ctx.fillRect(cx - R, cy - R, 2 * R, 2 * R);
-    ctx.drawImage(video, (hover.x - R / Z) * kx, (hover.y - R / Z) * ky, 2 * R / Z * kx, 2 * R / Z * ky, cx - R, cy - R, 2 * R, 2 * R);
-    ctx.restore();
-    ctx.strokeStyle = '#007AFF'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.stroke();
-    ctx.strokeStyle = '#ff3b30'; ctx.lineWidth = 1; ctx.beginPath();
-    ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R); ctx.stroke();
-  }
-}
-function showErr(e) { console.error(e); info.style.color = '#ff6b6b'; info.innerText = '⚠️ 오류: ' + (e && e.message ? e.message : e); }
-function renderLoop() { try { drawFrame(); } catch (e) { showErr(e); } requestAnimationFrame(renderLoop); }
-addEventListener('error', e => showErr(e.error || e.message));
 
-// ---------- 3. 추천 수 (5칸 윈도우 패턴 점수, 띈 3/4 및 4-3·3-3 보너스) ----------
+    // 2. 바깥쪽 줄 번호 강조
+    ctx.font = 'bold 11px -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    for (let i = 0; i < SIZE; i++) {
+      const t = getCoord(0, i), l = getCoord(i, 0);
+      const isTargetCol = bestMove && isMyTurn && bestMove.c === i;
+      const isTargetRow = bestMove && isMyTurn && bestMove.r === i;
+
+      ctx.fillStyle = isTargetCol ? '#ffcc00' : 'rgba(255,255,255,0.6)';
+      if (isTargetCol) {
+        ctx.beginPath(); ctx.arc(t.x, t.y - 10, 8, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffcc00'; ctx.fill();
+        ctx.fillStyle = '#000';
+      }
+      ctx.fillText(i + 1, t.x, t.y - 6);
+
+      ctx.fillStyle = isTargetRow ? '#ffcc00' : 'rgba(255,255,255,0.6)';
+      if (isTargetRow) {
+        ctx.beginPath(); ctx.arc(l.x - 14, l.y, 8, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffcc00'; ctx.fill();
+        ctx.fillStyle = '#000';
+      }
+      ctx.fillText(i + 1, l.x - 14, l.y + 4);
+    }
+
+    // 3. [추천 위치: 돌 모양 없이 '투명 조준 타겟'만 깜박임!]
+    if (bestMove && isMyTurn) {
+      const p = getCoord(bestMove.r, bestMove.c);
+      const time = Date.now() / 150;
+      const pulse = (Math.sin(time) + 1) / 2;
+
+      // 가로·세로 조준 안내선 (점선)
+      ctx.save();
+      ctx.strokeStyle = `rgba(255, 59, 48, ${0.3 + pulse * 0.4})`;
+      ctx.lineWidth = 1.8;
+      ctx.setLineDash([4, 4]);
+      const leftEnd = getCoord(bestMove.r, 0), rightEnd = getCoord(bestMove.r, SIZE - 1);
+      ctx.beginPath(); ctx.moveTo(leftEnd.x, leftEnd.y); ctx.lineTo(rightEnd.x, rightEnd.y); ctx.stroke();
+      const topEnd = getCoord(0, bestMove.c), bottomEnd = getCoord(SIZE - 1, bestMove.c);
+      ctx.beginPath(); ctx.moveTo(topEnd.x, topEnd.y); ctx.lineTo(bottomEnd.x, bottomEnd.y); ctx.stroke();
+      ctx.restore();
+
+      // [핵심] 속이 뻥 뚫린 '투명 조준 링' (돌 그래픽 없음!)
+      const targetRadius = rad + 2 + pulse * 8;
+      ctx.strokeStyle = '#ff3b30';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, targetRadius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // 바깥쪽 퍼지는 파동 링
+      ctx.strokeStyle = `rgba(255, 235, 59, ${0.7 - pulse * 0.5})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, targetRadius + 6 + pulse * 8, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // 십자 조준선 (가운데 교차점은 비워둠)
+      ctx.strokeStyle = '#ffeb3b';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      // 좌
+      ctx.moveTo(p.x - targetRadius - 4, p.y); ctx.lineTo(p.x - 5, p.y);
+      // 우
+      ctx.moveTo(p.x + 5, p.y); ctx.lineTo(p.x + targetRadius + 4, p.y);
+      // 상
+      ctx.moveTo(p.x, p.y - targetRadius - 4); ctx.lineTo(p.x, p.y - 5);
+      // 하
+      ctx.moveTo(p.x, p.y + 5); ctx.lineTo(p.x, p.y + targetRadius + 4);
+      ctx.stroke();
+
+      // 좌표 배지
+      const badgeText = `${bestMove.r + 1}행 ${bestMove.c + 1}열`;
+      ctx.font = 'bold 13px sans-serif';
+      const textW = ctx.measureText(badgeText).width;
+      const bx = p.x + rad + 8, by = p.y - 12;
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+      ctx.strokeStyle = '#ffeb3b';
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(bx, by, textW + 12, 22);
+      ctx.strokeRect(bx, by, textW + 12, 22);
+
+      ctx.fillStyle = '#ffeb3b';
+      ctx.textAlign = 'left';
+      ctx.fillText(badgeText, bx + 6, by + 16);
+    }
+  }
+
+  requestAnimationFrame(renderLoop);
+}
+
+// ------------------- [엔진 로직] -------------------
 const W5 = [0, 1, 10, 100, 1500, 1e6], DIRS = [[1, 0], [0, 1], [1, 1], [1, -1]];
 function evalCell(board, r, c, me, op) {
   let s = 0, fours = 0, threes = 0;
@@ -314,9 +383,14 @@ function evalCell(board, r, c, me, op) {
   if (fours >= 2 || (fours && threes)) s += 20000; else if (threes >= 2) s += 3000;
   return s;
 }
+
 const inb = (r, c) => r >= 0 && r < SIZE && c >= 0 && c < SIZE;
-const nearStone = (board, r, c, d) => { for (let i = -d; i <= d; i++) for (let j = -d; j <= d; j++) if (inb(r + i, c + j) && board[r + i][c + j]) return true; return false; };
-// (r,c)에 color 돌을 둔다고 가정했을 때: 5목 완성 여부, 다음 수에 5목이 되는 칸 목록(=4가 만들어지면 생김)
+const nearStone = (board, r, c, d) => {
+  for (let i = -d; i <= d; i++) for (let j = -d; j <= d; j++)
+    if (inb(r + i, c + j) && board[r + i][c + j]) return true;
+  return false;
+};
+
 function lineInfo(board, r, c, color) {
   const op = 3 - color, wins = new Set(); let five = false;
   for (const [dr, dc] of DIRS) for (let st = -4; st <= 0; st++) {
@@ -333,13 +407,14 @@ function lineInfo(board, r, c, color) {
   }
   return { five, wins: [...wins] };
 }
+
 function fiveCells(board, color) {
   const out = [];
   for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++)
     if (!board[r][c] && nearStone(board, r, c, 1) && lineInfo(board, r, c, color).five) out.push({ r, c });
   return out;
 }
-// VCF: '4'만 연속으로 두어(상대는 막을 수밖에 없음) 이기는 수순 탐색
+
 function vcf(board, me, depth, budget) {
   const op = 3 - me;
   if (fiveCells(board, op).length) { const f = fiveCells(board, me); return f.length ? f[0] : null; }
@@ -355,34 +430,46 @@ function vcf(board, me, depth, budget) {
     if (li.wins.length >= 2) win = fiveCells(board, op).length === 0;
     else if (!fiveCells(board, op).length) {
       const wr = li.wins[0] / SIZE | 0, wc = li.wins[0] % SIZE;
-      if (!lineInfo(board, wr, wc, op).five) { board[wr][wc] = op; win = !!vcf(board, me, depth - 1, budget); board[wr][wc] = 0; }
+      if (!lineInfo(board, wr, wc, op).five) {
+        board[wr][wc] = op;
+        win = !!vcf(board, me, depth - 1, budget);
+        board[wr][wc] = 0;
+      }
     }
     board[r][c] = 0;
     if (win) return { r, c };
   }
   return null;
 }
+
 function computeMove(board, me) {
   const op = 3 - me;
-  if (board.every(row => row.every(v => !v))) return { r: 7, c: 7 };
-  let f = fiveCells(board, me); if (f.length) return { ...f[0], why: '바로 이기는 수!' };
+  if (board.every(row => row.every(v => !v))) return { r: 7, c: 7, why: '첫 수 천원' };
+
+  let f = fiveCells(board, me); if (f.length) return { ...f[0], why: '승리 확정!' };
   f = fiveCells(board, op); if (f.length) return { ...f[0], why: '상대 5목 차단' };
-  const win = vcf(board, me, 10, { n: 40000 }); if (win) return { ...win, why: '이기는 수순 발견 (4를 연속으로 두세요)' };
+
+  const win = vcf(board, me, 10, { n: 40000 });
+  if (win) return { ...win, why: '연속 4 승리 수순' };
+
   const cands = [];
   for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
     if (board[r][c] || !nearStone(board, r, c, 2)) continue;
-    cands.push({ r, c, t: evalCell(board, r, c, me, op) * 1.25 + evalCell(board, r, c, op, me) + (14 - Math.abs(r - 7) - Math.abs(c - 7)) * 0.2 });
+    cands.push({ r, c, t: evalCell(board, r, c, me, op) * 1.35 + evalCell(board, r, c, op, me) + (14 - Math.abs(r - 7) - Math.abs(c - 7)) * 0.2 });
   }
+  if (!cands.length) return { r: 7, c: 7, why: '중앙' };
+
   cands.sort((a, b) => b.t - a.t);
-  for (const m of cands.slice(0, 10)) {            // 내가 둔 뒤 상대가 4연속으로 이기는 수순이 생기면 피한다
-    board[m.r][m.c] = me; const bad = vcf(board, op, 8, { n: 15000 }); board[m.r][m.c] = 0;
+  for (const m of cands.slice(0, 10)) {
+    board[m.r][m.c] = me;
+    const bad = vcf(board, op, 8, { n: 15000 });
+    board[m.r][m.c] = 0;
     if (!bad) return m;
   }
-  return cands[0];
+  return cands[0] || { r: 7, c: 7 };
 }
 
-
-setInterval(() => { try { processGame(); } catch (e) { showErr(e); } }, 200);
+setInterval(processGame, 200);
 requestAnimationFrame(renderLoop);
 </script>
 </body>
