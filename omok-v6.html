@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>오목 AI</title>
+<style>
+body{font-family:-apple-system,sans-serif;text-align:center;background:#121212;color:#fff;margin:0;padding:15px}
+.container{position:relative;display:inline-block;margin-top:10px;user-select:none}
+video{outline:2px solid #333;border-radius:8px;max-height:70vh;background:#000;display:block}
+canvas#overlay{position:absolute;top:0;left:0;cursor:crosshair}
+.controls{margin-bottom:8px;display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap}
+button{padding:9px 16px;font-size:14px;cursor:pointer;border-radius:6px;border:none;font-weight:bold}
+label{font-size:12px;color:#aaa}
+#status{margin-top:8px;color:#34c759;font-size:16px;font-weight:bold;min-height:24px}
+#info{font-size:12px;color:#777;min-height:16px}
+.my-turn{color:#ff3b30!important;font-size:20px!important;text-shadow:0 0 12px rgba(255,59,48,.7)}
+.opp-turn{color:#8e8e93!important}
+.cbtn{background:#333;color:#fff;border:3px solid transparent}.cbtn.on{border-color:#34c759;background:#1f3d2a}
+#ver{font-size:11px;color:#555;margin:-8px 0 8px}
+</style>
+</head>
+<body>
+<h1>오목 AI</h1>
+<div id="ver">v6 · 시작 전 대기 · 돌 선택 한 번 클릭</div>
+<div class="controls">
+  <button id="startBtn" style="background:#007AFF;color:#fff">1. 미러링 창 선택</button>
+  <button id="cBlack" class="cbtn">⚫ 내 돌: 흑 (선공)</button>
+  <button id="cWhite" class="cbtn">⚪ 내 돌: 백 (후공)</button>
+  <button id="autoBtn" style="background:#1c7c3a;color:#fff">자동 인식</button>
+  <button id="resetBtn" style="background:#444;color:#fff">영역 다시 그리기</button>
+  <label>흑 민감도 <input type="range" id="bk" min="10" max="60" value="20"></label>
+  <label>백 민감도 <input type="range" id="wk" min="20" max="120" value="70"></label>
+  <label title="밝은 판에서 흰 돌 인식용 (작을수록 민감)">백 색차 <input type="range" id="kc" min="3" max="20" value="8"></label>
+</div>
+<div id="status">준비 완료! 파란 버튼을 눌러주세요.</div>
+<div id="info"></div>
+<div class="container"><video id="video" autoplay playsinline muted></video><canvas id="overlay"></canvas></div>
+<canvas id="hc" style="display:none"></canvas>
+
+<script>
+const $ = id => document.getElementById(id);
+const video = $('video'), canvas = $('overlay'), ctx = canvas.getContext('2d');
+const hc = $('hc'), hx = hc.getContext('2d', { willReadFrequently: true });
+const statusText = $('status'), info = $('info');
+const SIZE = 15;
+const board = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+let myColor = (() => { try { return +localStorage.getItem('omokColor') || 1; } catch (e) { return 1; } })(), bestMove = null, isMyTurn = false;
+let isDragging = false, dragStart = null, dragEnd = null, boardRect = null, isMatched = false;
+let pending = '', boardNorm = null, hover = null, moveKey = '', waitingStart = false;
+
+function say(t, cls = '') { statusText.className = cls; statusText.innerText = t; }
+
+function selectStone(c) {   // 한 번 클릭하면 바로 적용 (선택은 기억됨)
+  myColor = c; moveKey = ''; pending = '';
+  try { localStorage.setItem('omokColor', c); } catch (e) {}
+  $('cBlack').classList.toggle('on', c === 1); $('cWhite').classList.toggle('on', c === 2);
+  processGame();
+}
+$('cBlack').onclick = () => selectStone(1);
+$('cWhite').onclick = () => selectStone(2);
+$('cBlack').classList.toggle('on', myColor === 1); $('cWhite').classList.toggle('on', myColor === 2);
+$('resetBtn').onclick = () => {
+  boardRect = boardNorm = null; isMatched = false; bestMove = null; pending = '';
+  say('돋보기를 보며 맨 바깥 격자선의 [좌상단 교차점]에서 [우하단 교차점]까지 드래그하세요!');
+};
+
+$('startBtn').onclick = async () => {
+  try {
+    if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+    video.srcObject = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    video.play(); boardRect = boardNorm = null; isMatched = false; pending = '';
+    say('🔍 바둑판을 자동 인식하는 중...');
+    video.onloadeddata = () => setTimeout(autoBoard, 800);
+  } catch (e) { alert('선택 취소 또는 에러: ' + e.message); }
+};
+
+const pos = e => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+canvas.onmousedown = e => { dragStart = dragEnd = pos(e); isDragging = true; isMatched = false; };
+canvas.onmousemove = e => { hover = pos(e); if (isDragging) dragEnd = hover; };
+canvas.onmouseleave = () => hover = null;
+canvas.onmouseup = () => {
+  if (!isDragging) return; isDragging = false;
+  const x = Math.min(dragStart.x, dragEnd.x), y = Math.min(dragStart.y, dragEnd.y);
+  const w = Math.abs(dragEnd.x - dragStart.x), h = Math.abs(dragEnd.y - dragStart.y);
+  if (w > 50 && h > 50) setBoardRect({ x, y, w, h });
+};
+
+
+function setBoardRect(rc) {
+  boardRect = rc; isMatched = true; pending = '';
+  boardNorm = { x: rc.x / canvas.width, y: rc.y / canvas.height, w: rc.w / canvas.width, h: rc.h / canvas.height };
+  say('✅ 바둑판 인식 완료 — 내 돌: ' + (myColor === 1 ? '흑' : '백') + ' (바꾸려면 위 버튼을 한 번 누르세요)');
+}
+function autoBoard() {
+  if (!video.videoWidth) return;
+  canvas.width = video.clientWidth; canvas.height = video.clientHeight;
+  const r = detectBoard();
+  if (!r) { say('⚠️ 자동 인식 실패 — [영역 다시 그리기]로 직접 지정하세요 (돋보기 지원)'); return; }
+  const kx = video.videoWidth / video.clientWidth, ky = video.videoHeight / video.clientHeight;
+  setBoardRect({ x: r.x / kx, y: r.y / ky, w: r.w / kx, h: r.h / ky });
+}
+$('autoBtn').onclick = autoBoard;
+
+// 자동 인식: 격자선(밝기 능선)의 가로/세로 프로파일에서 '15개 등간격 선'을 찾고,
+// 교차점마다 가로·세로 선이 모두 지나가는지(2D 검증)로 패널 테두리와 실제 격자를 구분
+function detectBoard() {
+  const W = video.videoWidth, H = video.videoHeight;
+  hc.width = W; hc.height = H; hx.drawImage(video, 0, 0);
+  const d = hx.getImageData(0, 0, W, H).data, g = new Float32Array(W * H);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) g[j] = d[i] + d[i + 1] + d[i + 2];
+  const Lx = (y, x) => Math.abs(2 * g[y * W + x] - g[y * W + x - 2] - g[y * W + x + 2]);
+  const Ly = (y, x) => Math.abs(2 * g[y * W + x] - g[(y - 2) * W + x] - g[(y + 2) * W + x]);
+  const Px = new Float32Array(W), Py = new Float32Array(H);
+  for (let y = 2; y < H - 2; y += 2) for (let x = 2; x < W - 2; x++) Px[x] += Lx(y, x);
+  for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x += 2) Py[y] += Ly(y, x);
+  const prep = P => {
+    const q = new Float32Array(P.length);
+    for (let i = 1; i < P.length - 1; i++) q[i] = Math.sqrt(Math.max(P[i - 1], P[i], P[i + 1]));
+    const cap = 1.25 * Array.from(q).sort((a, b) => b - a)[20];
+    return q.map(v => Math.min(v, cap));
+  };
+  const search = (Q, smin, smax) => {
+    let best = { sc: -1, x0: 0, s: smin };
+    for (let s = smin; s <= smax; s += 0.1) {
+      const m0 = Math.floor(Q.length - 2 - 14 * s);
+      for (let x0 = 0; x0 <= m0; x0++) {
+        let sc = 0; for (let i = 0; i < 15; i++) sc += Q[Math.round(x0 + i * s)];
+        if (sc > best.sc) best = { sc, x0, s };
+      }
+    }
+    return best;
+  };
+  const refine = (P, x0, s) => {
+    let sx = 0, sxi = 0;
+    for (let i = 0; i < 15; i++) {
+      let c = Math.min(Math.max(Math.round(x0 + i * s), 3), P.length - 4), bx = c, bv = -1;
+      for (let k = -3; k <= 3; k++) if (P[c + k] > bv) { bv = P[c + k]; bx = c + k; }
+      sx += bx; sxi += i * bx;
+    }
+    const b = (15 * sxi - 105 * sx) / (15 * 1015 - 105 * 105);
+    return { a: (sx - b * 105) / 15, b };
+  };
+  const score = (a, b, c, e) => {
+    const o = Math.max(3, Math.round(b * 0.25)); let t = 0;
+    for (let j = 0; j < 15; j++) {
+      const y = Math.round(c + j * e);
+      for (let i = 0; i < 15; i++) {
+        const x = Math.round(a + i * b);
+        if (x < o + 4 || y < o + 4 || x >= W - o - 4 || y >= H - o - 4) return -1;
+        let v = 0, h = 0;
+        for (const sg of [-1, 1]) for (let k = -1; k <= 1; k++) { v = Math.max(v, Lx(y + sg * o, x + k)); h = Math.max(h, Ly(y + k, x + sg * o)); }
+        t += Math.min(v, h);
+      }
+    }
+    return t;
+  };
+  const sx = search(prep(Px), 10, Math.min(200, W / 14)), X = refine(Px, sx.x0, sx.s);
+  const sy = search(prep(Py), X.b * 0.96, X.b * 1.04), Y = refine(Py, sy.x0, sy.s);
+  let best = null;
+  for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) {
+    const a = refine(Px, X.a + dx * X.b, X.b), c = refine(Py, Y.a + dy * Y.b, Y.b), sc = score(a.a, a.b, c.a, c.b);
+    if (!best || sc > best.sc) best = { sc, x: a.a, y: c.a, w: 14 * a.b, h: 14 * c.b };
+  }
+  return best && best.sc / 225 > 40 ? best : null;
+}
+
+function getCoord(r, c, rect = boardRect) {
+  return { x: rect.x + c * rect.w / (SIZE - 1), y: rect.y + r * rect.h / (SIZE - 1) };
+}
+
+// 돌 인식: 판 전체의 밝기 중앙값(=빈 교차점 기준)과 비교하는 상대 판별 (다크/라이트 판 모두 대응)
+function processGame() {
+  if (!isMatched || !myColor || !video.videoWidth) return;
+  if (hc.width !== video.videoWidth || hc.height !== video.videoHeight) { hc.width = video.videoWidth; hc.height = video.videoHeight; }
+  hx.drawImage(video, 0, 0);
+  const sx = video.videoWidth / video.clientWidth, sy = video.videoHeight / video.clientHeight;
+  // 교차점 중앙(격자선·마지막 수 표시 마커 위치)을 피해, 중심에서 대각선으로 떨어진 4곳을 샘플링
+  const stepPx = boardRect.w / (SIZE - 1) * sx, h = Math.max(1, Math.round(stepPx * 0.04)), off = Math.round(stepPx * 0.22), m = off + h;
+  const vals = [];
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
+    const p = getCoord(r, c), px = Math.round(p.x * sx), py = Math.round(p.y * sy);
+    if (px < m || py < m || px >= hc.width - m || py >= hc.height - m) { vals.push(null); continue; }
+    const q = [];
+    for (const [ax, ay] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const d = hx.getImageData(px + ax * off - h, py + ay * off - h, 2 * h + 1, 2 * h + 1).data;
+      let sr = 0, sg = 0, sb = 0, n = d.length / 4;
+      for (let i = 0; i < d.length; i += 4) { sr += d[i]; sg += d[i + 1]; sb += d[i + 2]; }
+      const mr = sr / n, mg = sg / n, mb = sb / n;
+      q.push([(sr + sg + sb) / (3 * n), (sr - sb) / n, Math.max(mr, mg, mb) - Math.min(mr, mg, mb)]); // [밝기, 색차(R-B): 베이지 판은 +, 흰 돌은 0 근처]
+    }
+    q.sort((a, b) => a[0] - b[0]);
+    vals.push([(q[1][0] + q[2][0]) / 2, (q[1][1] + q[2][1]) / 2, (q[1][2] + q[2][2]) / 2]); // 중간 두 값 평균: 하이라이트 같은 튀는 값 제거
+  }
+  const ok = vals.filter(v => v !== null);
+  const med = ok.map(v => v[0]).sort((a, b) => a - b)[ok.length >> 1];
+  const medC = ok.map(v => v[1]).sort((a, b) => a - b)[ok.length >> 1];
+  const kb = +$('bk').value, kw = +$('wk').value, kc = +$('kc').value;
+  // 흑: 판보다 어두움 / 백: 판보다 훨씬 밝거나(어두운 판), 판의 색감과 다름(밝은 베이지 판)
+  const SAT_MAX = 50, colored = vals.filter(v => v && v[2] > SAT_MAX).length;   // 파란 '시작' 버튼 등 색이 강한 칸
+  const raw = vals.map(v => v === null || v[2] > SAT_MAX ? 0 : v[0] < med - kb ? 1 : (v[0] > med + kw || (Math.abs(v[1] - medC) > kc && v[0] > med - 25)) ? 2 : 0);
+  const sig = raw.join('');
+  if (sig !== pending) { pending = sig; return; }
+  if (colored >= 4) {   // '시작' 버튼 등이 판을 가리는 중 = 게임 시작 전: 아이폰 화면과 똑같이 두고 대기
+    board.forEach(row => row.fill(0)); isMyTurn = false; bestMove = null; moveKey = ''; waitingStart = true;
+    info.style.color = ''; info.innerText = '';
+    say('▶ 아이폰에서 [시작]을 누르면 바로 분석합니다', 'opp-turn'); return;
+  } // 연속 2회 같은 결과일 때만 반영 (애니메이션 오인식 방지)
+  waitingStart = false;
+  let bc = 0, wc = 0;
+  raw.forEach((v, i) => { board[i / SIZE | 0][i % SIZE] = v; if (v === 1) bc++; else if (v === 2) wc++; });
+  info.style.color = ''; info.innerText = `빈칸 기준 밝기 ${med.toFixed(0)} · 흑 ${bc} · 백 ${wc}`;
+
+  const diff = bc - wc;
+  const valid = diff === 0 || diff === 1;            // 정상: 흑이 백과 같거나 1개 많음
+  // 개수가 맞지 않으면 돌 인식 오차로 보고, 추천 자리를 숨기지 않고 '참고용'으로 계속 표시
+  isMyTurn = valid ? (myColor === 1 ? diff === 0 : diff === 1) : true;
+  if (isMyTurn) {
+    const key = sig + myColor;
+    if (key !== moveKey) { moveKey = key; bestMove = computeMove(board, myColor); }
+    const m = bestMove;
+    const where = m ? `위에서 ${m.r + 1}번째, 왼쪽에서 ${m.c + 1}번째에 두세요!${m.why ? ' — ' + m.why : ''}` : '둘 곳을 찾지 못했어요';
+    say(valid ? `⚡️ ${where}` : `⚠️ 돌 인식 오차(흑 ${bc} · 백 ${wc}) — 참고용: ${where}`, 'my-turn');
+  } else {
+    bestMove = null; moveKey = '';
+    say('⏳ 상대방이 생각 중입니다...', 'opp-turn');
+  }
+}
+
+function drawFrame() {
+  if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
+    canvas.width = video.clientWidth; canvas.height = video.clientHeight;
+    if (boardNorm) boardRect = { x: boardNorm.x * canvas.width, y: boardNorm.y * canvas.height, w: boardNorm.w * canvas.width, h: boardNorm.h * canvas.height };
+  }
+  canvas.style.cursor = 'crosshair';
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (isDragging && dragStart && dragEnd) {
+    const rc = { x: Math.min(dragStart.x, dragEnd.x), y: Math.min(dragStart.y, dragEnd.y), w: Math.abs(dragEnd.x - dragStart.x), h: Math.abs(dragEnd.y - dragStart.y) };
+    ctx.strokeStyle = '#007AFF'; ctx.lineWidth = 2; ctx.strokeRect(rc.x, rc.y, rc.w, rc.h);
+    ctx.strokeStyle = 'rgba(0,122,255,.5)'; ctx.lineWidth = 1;
+    for (let i = 0; i < SIZE; i++) {
+      const a = getCoord(0, i, rc), b = getCoord(SIZE - 1, i, rc), c = getCoord(i, 0, rc), d = getCoord(i, SIZE - 1, rc);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.moveTo(c.x, c.y); ctx.lineTo(d.x, d.y); ctx.stroke();
+    }
+  }
+  if (boardRect && isMatched && !waitingStart) {   // 게임 시작 전에는 아이폰 화면 그대로(아무것도 덧그리지 않음)
+    const rad = boardRect.w / (SIZE - 1) * 0.3;
+    for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
+      const p = getCoord(r, c), v = board[r][c];
+      ctx.beginPath();
+      if (v) { ctx.fillStyle = v === 1 ? '#000' : '#fff'; ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 2; ctx.arc(p.x, p.y, rad, 0, 7); ctx.fill(); ctx.stroke(); }
+      else { ctx.fillStyle = 'rgba(0,255,120,.5)'; ctx.arc(p.x, p.y, 2, 0, 7); ctx.fill(); }
+    }
+    ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+    for (let i = 0; i < SIZE; i++) {
+      const t = getCoord(0, i), l = getCoord(i, 0);
+      const hot = bestMove && isMyTurn;   // 추천 자리의 행·열 번호는 아래에서 크게 따로 표시
+      ctx.strokeStyle = 'rgba(0,0,0,.7)'; ctx.lineWidth = 3;
+      if (!(hot && i === bestMove.c)) { ctx.strokeText(i + 1, t.x, t.y - 8); ctx.fillText(i + 1, t.x, t.y - 8); }
+      if (!(hot && i === bestMove.r)) { ctx.strokeText(i + 1, l.x - 12, l.y + 4); ctx.fillText(i + 1, l.x - 12, l.y + 4); }
+    }
+    if (bestMove && isMyTurn) {   // 속이 빈 깜박이는 링 + 십자선 (이미 둔 돌처럼 보이지 않게), 해당 행·열 번호 강조
+      const p = getCoord(bestMove.r, bestMove.c), pulse = (Math.sin(Date.now() / 180) + 1) / 2, a = .5 + pulse * .5;
+      ctx.strokeStyle = `rgba(255,40,40,${a})`; ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.arc(p.x, p.y, rad + 2 + pulse * 10, 0, 7); ctx.stroke();
+      ctx.lineWidth = 1.5; ctx.beginPath();
+      ctx.moveTo(p.x - rad, p.y); ctx.lineTo(p.x + rad, p.y); ctx.moveTo(p.x, p.y - rad); ctx.lineTo(p.x, p.y + rad); ctx.stroke();
+      const t = getCoord(0, bestMove.c), l = getCoord(bestMove.r, 0);
+      ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = '#ffeb3b'; ctx.textAlign = 'center';
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 4;
+      ctx.strokeText(bestMove.c + 1, t.x, t.y - 8); ctx.fillText(bestMove.c + 1, t.x, t.y - 8);
+      ctx.strokeText(bestMove.r + 1, l.x - 14, l.y + 6); ctx.fillText(bestMove.r + 1, l.x - 14, l.y + 6);
+    }
+  }
+  if (hover && !isMatched && video.videoWidth) { // 돋보기
+    const R = 70, Z = 4, kx = video.videoWidth / video.clientWidth, ky = video.videoHeight / video.clientHeight;
+    const cx = hover.x < canvas.width / 2 ? hover.x + R + 30 : hover.x - R - 30;
+    const cy = hover.y > R + 40 ? hover.y - R - 30 : hover.y + R + 30;
+    ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.clip();
+    ctx.fillStyle = '#000'; ctx.fillRect(cx - R, cy - R, 2 * R, 2 * R);
+    ctx.drawImage(video, (hover.x - R / Z) * kx, (hover.y - R / Z) * ky, 2 * R / Z * kx, 2 * R / Z * ky, cx - R, cy - R, 2 * R, 2 * R);
+    ctx.restore();
+    ctx.strokeStyle = '#007AFF'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.stroke();
+    ctx.strokeStyle = '#ff3b30'; ctx.lineWidth = 1; ctx.beginPath();
+    ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R); ctx.stroke();
+  }
+}
+function showErr(e) { console.error(e); info.style.color = '#ff6b6b'; info.innerText = '⚠️ 오류: ' + (e && e.message ? e.message : e); }
+function renderLoop() { try { drawFrame(); } catch (e) { showErr(e); } requestAnimationFrame(renderLoop); }
+addEventListener('error', e => showErr(e.error || e.message));
+
+// ---------- 3. 추천 수 (5칸 윈도우 패턴 점수, 띈 3/4 및 4-3·3-3 보너스) ----------
+const W5 = [0, 1, 10, 100, 1500, 1e6], DIRS = [[1, 0], [0, 1], [1, 1], [1, -1]];
+function evalCell(board, r, c, me, op) {
+  let s = 0, fours = 0, threes = 0;
+  for (const [dr, dc] of DIRS) {
+    let best = 0, n3 = 0;
+    for (let st = -4; st <= 0; st++) {
+      let own = 1, ok = true;
+      for (let k = st; k <= st + 4; k++) {
+        if (k === 0) continue;
+        const nr = r + dr * k, nc = c + dc * k;
+        if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE || board[nr][nc] === op) { ok = false; break; }
+        if (board[nr][nc] === me) own++;
+      }
+      if (!ok) continue;
+      s += W5[own]; if (own > best) best = own; if (own === 3) n3++;
+    }
+    if (best === 4) fours++; else if (best === 3 && n3 >= 2) threes++;
+  }
+  if (fours >= 2 || (fours && threes)) s += 20000; else if (threes >= 2) s += 3000;
+  return s;
+}
+const inb = (r, c) => r >= 0 && r < SIZE && c >= 0 && c < SIZE;
+const nearStone = (board, r, c, d) => { for (let i = -d; i <= d; i++) for (let j = -d; j <= d; j++) if (inb(r + i, c + j) && board[r + i][c + j]) return true; return false; };
+// (r,c)에 color 돌을 둔다고 가정했을 때: 5목 완성 여부, 다음 수에 5목이 되는 칸 목록(=4가 만들어지면 생김)
+function lineInfo(board, r, c, color) {
+  const op = 3 - color, wins = new Set(); let five = false;
+  for (const [dr, dc] of DIRS) for (let st = -4; st <= 0; st++) {
+    let own = 0, ne = 0, empty = -1, ok = true;
+    for (let k = st; k <= st + 4; k++) {
+      const nr = r + dr * k, nc = c + dc * k;
+      if (!inb(nr, nc)) { ok = false; break; }
+      const v = k === 0 ? color : board[nr][nc];
+      if (v === op) { ok = false; break; }
+      if (v === color) own++; else { ne++; empty = nr * SIZE + nc; }
+    }
+    if (!ok) continue;
+    if (own === 5) five = true; else if (own === 4 && ne === 1) wins.add(empty);
+  }
+  return { five, wins: [...wins] };
+}
+function fiveCells(board, color) {
+  const out = [];
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++)
+    if (!board[r][c] && nearStone(board, r, c, 1) && lineInfo(board, r, c, color).five) out.push({ r, c });
+  return out;
+}
+// VCF: '4'만 연속으로 두어(상대는 막을 수밖에 없음) 이기는 수순 탐색
+function vcf(board, me, depth, budget) {
+  const op = 3 - me;
+  if (fiveCells(board, op).length) { const f = fiveCells(board, me); return f.length ? f[0] : null; }
+  if (depth <= 0) return null;
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
+    if (board[r][c] || !nearStone(board, r, c, 2)) continue;
+    if (--budget.n < 0) return null;
+    const li = lineInfo(board, r, c, me);
+    if (li.five) return { r, c };
+    if (!li.wins.length) continue;
+    board[r][c] = me;
+    let win = false;
+    if (li.wins.length >= 2) win = fiveCells(board, op).length === 0;
+    else if (!fiveCells(board, op).length) {
+      const wr = li.wins[0] / SIZE | 0, wc = li.wins[0] % SIZE;
+      if (!lineInfo(board, wr, wc, op).five) { board[wr][wc] = op; win = !!vcf(board, me, depth - 1, budget); board[wr][wc] = 0; }
+    }
+    board[r][c] = 0;
+    if (win) return { r, c };
+  }
+  return null;
+}
+function computeMove(board, me) {
+  const op = 3 - me;
+  if (board.every(row => row.every(v => !v))) return { r: 7, c: 7 };
+  let f = fiveCells(board, me); if (f.length) return { ...f[0], why: '바로 이기는 수!' };
+  f = fiveCells(board, op); if (f.length) return { ...f[0], why: '상대 5목 차단' };
+  const win = vcf(board, me, 10, { n: 40000 }); if (win) return { ...win, why: '이기는 수순 발견 (4를 연속으로 두세요)' };
+  const cands = [];
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
+    if (board[r][c] || !nearStone(board, r, c, 2)) continue;
+    cands.push({ r, c, t: evalCell(board, r, c, me, op) * 1.25 + evalCell(board, r, c, op, me) + (14 - Math.abs(r - 7) - Math.abs(c - 7)) * 0.2 });
+  }
+  cands.sort((a, b) => b.t - a.t);
+  for (const m of cands.slice(0, 10)) {            // 내가 둔 뒤 상대가 4연속으로 이기는 수순이 생기면 피한다
+    board[m.r][m.c] = me; const bad = vcf(board, op, 8, { n: 15000 }); board[m.r][m.c] = 0;
+    if (!bad) return m;
+  }
+  return cands[0];
+}
+
+
+setInterval(() => { try { processGame(); } catch (e) { showErr(e); } }, 200);
+requestAnimationFrame(renderLoop);
+</script>
+</body>
+</html>
