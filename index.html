@@ -429,103 +429,57 @@ function isDoubleThreeFoul(board, r, c, color) {
   return open3Count >= 2;
 }
 
-function hasFiveFrom(board, r, c, color) {
-  for (const [dr, dc] of DIRS) {
-    let n = 1;
-    for (const sign of [-1, 1]) {
-      let rr = r + dr * sign, cc = c + dc * sign;
-      while (inb(rr, cc) && board[rr][cc] === color) {
-        n++; rr += dr * sign; cc += dc * sign;
-      }
-    }
-    if (n >= 5) return true;
-  }
-  return false;
-}
-
-function winningMoves(board, color, candidatesOnly = false) {
-  const wins = [];
-  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
-    if (board[r][c] !== 0) continue;
-    if (candidatesOnly) {
-      let near = false;
-      for (let dr = -2; dr <= 2 && !near; dr++)
-        for (let dc = -2; dc <= 2 && !near; dc++) {
-          const rr = r + dr, cc = c + dc;
-          if (inb(rr, cc) && board[rr][cc] !== 0) near = true;
-        }
-      if (!near) continue;
-    }
-    board[r][c] = color;
-    const won = hasFiveFrom(board, r, c, color);
-    board[r][c] = 0;
-    if (won) wins.push({r, c});
-  }
-  return wins;
-}
-
 function computeMove(board, me) {
   const op = 3 - me;
-  if (board.every(row => row.every(v => !v))) return {r: 7, c: 7, why: '중앙 선점'};
+  if (board.every(row => row.every(v => !v))) return { r: 7, c: 7, why: '중앙 선점' };
 
-  // 1) If a legal immediate win exists, take it.
-  const myWins = winningMoves(board, me, true)
-    .filter(p => !isDoubleThreeFoul(board, p.r, p.c, me));
-  if (myWins.length) return {...myWins[0], why: '★ 지금 이기는 수'};
+  let bestScore = -Infinity;
+  let bestSpot = null;
+  let urgentDefense = null;
+  let urgentWin = null;
 
-  // 2) Enumerate all immediate opponent wins, not just a heuristic score.
-  const opWins = winningMoves(board, op, true);
-  if (opWins.length === 1) return {...opWins[0], why: '상대의 즉시 승리 차단'};
-  // If two or more independent winning points exist, one block cannot stop them all.
-  // Prefer a forcing move that wins now (handled above), otherwise prioritize creating
-  // our own threat and clearly report the danger.
   const candidates = [];
-  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
-    if (board[r][c] !== 0) continue;
-    let near = false;
-    for (let dr = -2; dr <= 2 && !near; dr++) for (let dc = -2; dc <= 2 && !near; dc++) {
-      const rr = r + dr, cc = c + dc;
-      if (inb(rr, cc) && board[rr][cc] !== 0) near = true;
-    }
-    if (near && !isDoubleThreeFoul(board, r, c, me)) candidates.push({r,c});
-  }
-  if (!candidates.length) {
-    for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++)
-      if (board[r][c] === 0) candidates.push({r,c});
-  }
+  for (let r = 0; r < SIZE; r++) {
+    for (let c = 0; c < SIZE; c++) {
+      if (board[r][c] !== 0) continue;
 
-  let best = null, bestScore = -Infinity;
-  for (const {r,c} of candidates) {
-    // Score both sides' resulting patterns after simulating the move.
-    board[r][c] = me;
-    const attack = evaluateCell(board, r, c, me);
-    const ownWinsNext = winningMoves(board, me, true).length;
-    board[r][c] = 0;
+      let hasNeighbor = false;
+      for (let dr = -2; dr <= 2 && !hasNeighbor; dr++) {
+        for (let dc = -2; dc <= 2 && !hasNeighbor; dc++) {
+          const nr = r + dr, nc = c + dc;
+          if (inb(nr, nc) && board[nr][nc] !== 0) hasNeighbor = true;
+        }
+      }
+      if (!hasNeighbor) continue;
+      if (isDoubleThreeFoul(board, r, c, me)) continue;
 
-    board[r][c] = op;
-    const defense = evaluateCell(board, r, c, op);
-    board[r][c] = 0;
-
-    // Strongly favor creating immediate winning threats, then block opponent threats.
-    let score = attack + defense * 2.4 + ownWinsNext * 1800000;
-    if (opWins.length >= 2) score += attack * 0.5;
-    score += (14 - Math.abs(r - 7) - Math.abs(c - 7)) * 10;
-
-    // Avoid moves that leave an immediate opponent win, where another move can prevent it.
-    board[r][c] = me;
-    const replies = winningMoves(board, op, true);
-    board[r][c] = 0;
-    if (replies.length) score -= 25000000 + replies.length * 1000000;
-
-    if (score > bestScore) {
-      bestScore = score;
-      best = {r,c,why: replies.length ? '위험 수밖에 없어 최선의 방어 후보' :
-        ownWinsNext ? '연속 승리 위협 만들기' : '공격과 방어를 함께 평가'};
+      candidates.push({ r, c });
     }
   }
-  if (opWins.length >= 2 && best)
-    best.why = '상대 복수 승리 위협 — 완전 방어 불가 가능성';
-  return best || {r:7,c:7,why:'중앙 후보'};
+
+  for (const cand of candidates) {
+    const { r, c } = cand;
+    const myAtk = evaluateCell(board, r, c, me);
+    const opDef = evaluateCell(board, r, c, op);
+
+    if (myAtk >= 10000000) return { r, c, why: '★ 승리 확정!' };
+    if (opDef >= 10000000) urgentDefense = { r, c, why: '상대 5목 긴급 차단!' };
+    if (!urgentDefense && opDef >= 1000000) urgentDefense = { r, c, why: '상대 필승 4목 차단!' };
+    if (myAtk >= 1000000) urgentWin = { r, c, why: '필승 4목 공격!' };
+
+    const centerBonus = (14 - Math.abs(r - 7) - Math.abs(c - 7)) * 10;
+    const totalScore = myAtk + opDef * 2.2 + centerBonus;
+
+    if (totalScore > bestScore) {
+      bestScore = totalScore;
+      bestSpot = { r, c, why: opDef > myAtk ? '상대 급소 방어' : '유리한 공격 전개' };
+    }
+  }
+
+  if (urgentDefense) return urgentDefense;
+  if (urgentWin) return urgentWin;
+
+  return bestSpot || { r: 7, c: 7, why: '중앙' };
 }
 
 setInterval(processGame, 200);
