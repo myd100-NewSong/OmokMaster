@@ -31,6 +31,7 @@ label{font-size:12px;color:#aaa}
   <button id="resetBtn" style="background:#444;color:#fff">영역 다시 그리기</button>
   <label>흑 민감도 <input type="range" id="bk" min="10" max="60" value="20"></label>
   <label>백 민감도 <input type="range" id="wk" min="20" max="120" value="70"></label>
+  <label title="밝은 판에서 흰 돌 인식용 (작을수록 민감)">백 색차 <input type="range" id="kc" min="3" max="20" value="8"></label>
 </div>
 <div id="status">준비 완료! 파란 버튼을 눌러주세요.</div>
 <div id="info"></div>
@@ -194,16 +195,19 @@ function processGame() {
     const q = [];
     for (const [ax, ay] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
       const d = hx.getImageData(px + ax * off - h, py + ay * off - h, 2 * h + 1, 2 * h + 1).data;
-      let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] + d[i + 1] + d[i + 2];
-      q.push(s / (d.length / 4 * 3));
+      let sr = 0, sg = 0, sb = 0, n = d.length / 4;
+      for (let i = 0; i < d.length; i += 4) { sr += d[i]; sg += d[i + 1]; sb += d[i + 2]; }
+      q.push([(sr + sg + sb) / (3 * n), (sr - sb) / n]); // [밝기, 색차(R-B): 베이지 판은 +, 흰 돌은 0 근처]
     }
-    q.sort((a, b) => a - b);
-    vals.push((q[1] + q[2]) / 2); // 중간 두 값 평균: 돌의 하이라이트 같은 튀는 값 제거
+    q.sort((a, b) => a[0] - b[0]);
+    vals.push([(q[1][0] + q[2][0]) / 2, (q[1][1] + q[2][1]) / 2]); // 중간 두 값 평균: 하이라이트 같은 튀는 값 제거
   }
-  const sorted = vals.filter(v => v !== null).sort((a, b) => a - b);
-  const med = sorted[sorted.length >> 1];
-  const kb = +$('bk').value, kw = +$('wk').value;
-  const raw = vals.map(v => v === null ? 0 : v < med - kb ? 1 : v > med + kw ? 2 : 0);
+  const ok = vals.filter(v => v !== null);
+  const med = ok.map(v => v[0]).sort((a, b) => a - b)[ok.length >> 1];
+  const medC = ok.map(v => v[1]).sort((a, b) => a - b)[ok.length >> 1];
+  const kb = +$('bk').value, kw = +$('wk').value, kc = +$('kc').value;
+  // 흑: 판보다 어두움 / 백: 판보다 훨씬 밝거나(어두운 판), 판의 색감과 다름(밝은 베이지 판)
+  const raw = vals.map(v => v === null ? 0 : v[0] < med - kb ? 1 : (v[0] > med + kw || (Math.abs(v[1] - medC) > kc && v[0] > med - 25)) ? 2 : 0);
   const sig = raw.join('');
   if (sig !== pending) { pending = sig; return; } // 연속 2회 같은 결과일 때만 반영 (애니메이션 오인식 방지)
   let bc = 0, wc = 0;
