@@ -11,7 +11,7 @@
 <style>
 body{font-family:-apple-system,sans-serif;background:#121212;color:#fff;margin:0;padding:16px;text-align:center}
 button,select{font-size:17px;border-radius:10px;border:none;padding:14px 20px;font-weight:bold}
-#pick{background:#007AFF;color:#fff;width:100%;max-width:420px}
+button.main,button.sub{width:100%;max-width:420px;margin:5px 0;color:#fff}button.main{background:#007AFF}button.sub{background:#3a3a3c;font-size:15px}#hint{font-size:12px;color:#888;line-height:1.5;margin:6px auto;max-width:420px}
 select{background:#333;color:#fff;margin-top:10px}
 #res{margin:16px 0 8px;font-size:22px;font-weight:bold;color:#ff3b30;min-height:30px}
 #info{font-size:13px;color:#888;min-height:18px}
@@ -22,9 +22,12 @@ details{margin-top:14px;color:#aaa;font-size:14px}label{display:block;margin:6px
 <body>
 <h2>오목 훈수</h2>
 <input type="file" id="f" accept="image/*" hidden>
-<button id="pick">📷 스크린샷 선택</button><br>
+<button id="paste" class="main">📋 붙여넣기 (방금 찍은 스크린샷)</button>
+<button id="cap" class="sub" style="display:none">🖥️ 화면에서 바로 캡처 (맥/PC)</button>
+<button id="pick" class="sub">📁 파일에서 선택</button><br>
+<div id="hint">아이폰: 스크린샷 찍기 → 왼쪽 아래 미리보기 → 완료 → <b>복사 및 삭제</b> → 여기서 붙여넣기<br>맥: ⌃⌘⇧4로 영역을 복사한 뒤 ⌘V (또는 파일을 끌어다 놓기)</div>
 <select id="side"><option value="0">둘 차례: 자동</option><option value="1">내 돌: 흑</option><option value="2">내 돌: 백</option></select>
-<div id="res">게임 화면 스크린샷을 선택하세요</div>
+<div id="res">게임 화면 스크린샷을 붙여넣으세요</div>
 <div id="info"></div>
 <canvas id="cv" width="10" height="10"></canvas>
 <details><summary>인식이 이상하면 (민감도)</summary>
@@ -232,18 +235,50 @@ if (typeof document !== 'undefined') {
       }
     }, 30);
   };
-  $('pick').onclick = () => $('f').click();
-  $('f').onchange = e => {
-    const file = e.target.files[0]; if (!file) return;
-    const img = new Image();
-    img.onload = () => {
-      cv.width = img.naturalWidth; cv.height = img.naturalHeight; cx.drawImage(img, 0, 0);
-      const im = cx.getImageData(0, 0, cv.width, cv.height);
-      last = { W: cv.width, H: cv.height, data: im.data };
-      URL.revokeObjectURL(img.src); run();
-    };
-    img.src = URL.createObjectURL(file); e.target.value = '';
+  const setSource = (src, w, h) => {
+    cv.width = w; cv.height = h; cx.drawImage(src, 0, 0);
+    last = { W: w, H: h, data: cx.getImageData(0, 0, w, h).data }; run();
   };
+  const loadBlob = blob => {
+    const img = new Image();
+    img.onload = () => { setSource(img, img.naturalWidth, img.naturalHeight); URL.revokeObjectURL(img.src); };
+    img.onerror = () => { $('res').innerText = '이미지를 열 수 없어요.'; };
+    img.src = URL.createObjectURL(blob);
+  };
+  // 1) 클립보드 붙여넣기 버튼 (아이폰: '복사 및 삭제'로 복사한 스크린샷)
+  $('paste').onclick = async () => {
+    try {
+      for (const it of await navigator.clipboard.read()) {
+        const t = it.types.find(x => x.startsWith('image/'));
+        if (t) { loadBlob(await it.getType(t)); return; }
+      }
+      $('res').innerText = '클립보드에 이미지가 없어요. 스크린샷을 먼저 복사하세요.';
+    } catch (e) { $('res').innerText = '붙여넣기가 허용되지 않았어요. 뜨는 "붙여넣기" 버튼을 눌러 주세요.'; }
+  };
+  // 2) ⌘V / 길게 눌러 붙여넣기, 3) 파일 끌어다 놓기
+  document.addEventListener('paste', e => {
+    const it = [...(e.clipboardData ? e.clipboardData.items : [])].find(i => i.type.startsWith('image/'));
+    if (it) { e.preventDefault(); loadBlob(it.getAsFile()); }
+  });
+  addEventListener('dragover', e => e.preventDefault());
+  addEventListener('drop', e => { e.preventDefault(); const f = [...e.dataTransfer.files].find(x => x.type.startsWith('image/')); if (f) loadBlob(f); });
+  // 4) 맥/PC: 화면에서 바로 캡처 (아이폰 사파리는 미지원이라 버튼이 숨겨짐)
+  if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+    $('cap').style.display = 'inline-block';
+    $('cap').onclick = async () => {
+      try {
+        const st = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+        const v = document.createElement('video'); v.srcObject = st; v.muted = true; await v.play();
+        await new Promise(r => setTimeout(r, 400));
+        const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+        c.getContext('2d').drawImage(v, 0, 0); st.getTracks().forEach(t => t.stop());
+        setSource(c, c.width, c.height);
+      } catch (e) { $('res').innerText = '화면 캡처가 취소되었어요.'; }
+    };
+  }
+  // 5) 파일 선택 (보조)
+  $('pick').onclick = () => $('f').click();
+  $('f').onchange = e => { if (e.target.files[0]) loadBlob(e.target.files[0]); e.target.value = ''; };
   ['side', 'bk', 'wk'].forEach(id => $(id).onchange = run);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 }
