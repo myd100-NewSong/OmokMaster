@@ -235,6 +235,7 @@ function renderLoop() {
     canvas.width = video.clientWidth; canvas.height = video.clientHeight;
     if (boardNorm) boardRect = { x: boardNorm.x * canvas.width, y: boardNorm.y * canvas.height, w: boardNorm.w * canvas.width, h: boardNorm.h * canvas.height };
   }
+  canvas.style.cursor = 'crosshair';
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (isDragging && dragStart && dragEnd) {
     const rc = { x: Math.min(dragStart.x, dragEnd.x), y: Math.min(dragStart.y, dragEnd.y), w: Math.abs(dragEnd.x - dragStart.x), h: Math.abs(dragEnd.y - dragStart.y) };
@@ -265,6 +266,15 @@ function renderLoop() {
       ctx.fillStyle = '#ff0033'; ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, 7); ctx.fill();
       ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#ffeb3b'; ctx.textAlign = 'left';
       ctx.fillText(`(${bestMove.r + 1}, ${bestMove.c + 1})`, p.x + rad + 14, p.y - rad - 6);
+      // 마우스가 추천 자리(한 칸 범위)에 올라가면 "OK" 알림
+      if (hover && Math.hypot(hover.x - p.x, hover.y - p.y) < boardRect.w / (SIZE - 1) * 0.5) {
+        const bw = 78, bh = 32, bx = p.x - bw / 2, by = p.y - rad - 22 - bh;
+        ctx.fillStyle = '#34c759'; ctx.fillRect(bx, by, bw, bh);
+        ctx.beginPath(); ctx.moveTo(p.x - 7, by + bh); ctx.lineTo(p.x + 7, by + bh); ctx.lineTo(p.x, by + bh + 8); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText('OK ✓', p.x, by + 23);
+        canvas.style.cursor = 'pointer';
+      }
     }
   }
   if (hover && !isMatched && video.videoWidth) { // 돋보기
