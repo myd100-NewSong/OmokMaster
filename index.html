@@ -2,43 +2,123 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="오목 훈수">
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icon.png">
-<title>오목 훈수 (스크린샷)</title>
+<title>오목 AI - 맥 미러링 훈수기 v3</title>
 <style>
-body{font-family:-apple-system,sans-serif;background:#121212;color:#fff;margin:0;padding:16px;text-align:center}
-button,select{font-size:17px;border-radius:10px;border:none;padding:14px 20px;font-weight:bold}
-button.main,button.sub{width:100%;max-width:420px;margin:5px 0;color:#fff}button.main{background:#007AFF}button.sub{background:#3a3a3c;font-size:15px}#hint{font-size:12px;color:#888;line-height:1.5;margin:6px auto;max-width:420px}
-select{background:#333;color:#fff;margin-top:10px}
-#res{margin:16px 0 8px;font-size:22px;font-weight:bold;color:#ff3b30;min-height:30px}
-#info{font-size:13px;color:#888;min-height:18px}
-canvas{width:100%;max-width:420px;border-radius:10px;margin-top:10px;background:#000}
-details{margin-top:14px;color:#aaa;font-size:14px}label{display:block;margin:6px}
+body{font-family:-apple-system,sans-serif;text-align:center;background:#121212;color:#fff;margin:0;padding:15px}
+.container{position:relative;display:inline-block;margin-top:10px;user-select:none}
+video{outline:2px solid #333;border-radius:8px;max-height:70vh;background:#000;display:block}
+canvas#overlay{position:absolute;top:0;left:0;cursor:crosshair}
+.controls{margin-bottom:8px;display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap}
+button{padding:9px 16px;font-size:14px;cursor:pointer;border-radius:6px;border:none;font-weight:bold}
+label{font-size:12px;color:#aaa}
+#status{margin-top:8px;color:#34c759;font-size:16px;font-weight:bold;min-height:24px}
+#info{font-size:12px;color:#777;min-height:16px}
+.my-turn{color:#ff3b30!important;font-size:20px!important;text-shadow:0 0 12px rgba(255,59,48,.7)}
+.opp-turn{color:#8e8e93!important}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:999;justify-content:center;align-items:center}
+.modal-box{background:#222;border:2px solid #007AFF;border-radius:12px;padding:25px 30px}
+.modal-box h2{margin:0 0 10px}.modal-box p{margin:0 0 20px;color:#aaa;font-size:14px}
+.modal-btns{display:flex;gap:15px;justify-content:center}
+.m-btn{padding:14px 22px;font-size:16px;border-radius:8px;border:2px solid #555}
 </style>
 </head>
 <body>
-<h2>오목 훈수</h2>
-<input type="file" id="f" accept="image/*" hidden>
-<button id="paste" class="main">📋 붙여넣기 (방금 찍은 스크린샷)</button>
-<button id="cap" class="sub" style="display:none">🖥️ 화면에서 바로 캡처 (맥/PC)</button>
-<button id="pick" class="sub">📁 파일에서 선택</button><br>
-<div id="hint">아이폰: 스크린샷 찍기 → 왼쪽 아래 미리보기 → 완료 → <b>복사 및 삭제</b> → 여기서 붙여넣기<br>맥: ⌃⌘⇧4로 영역을 복사한 뒤 ⌘V (또는 파일을 끌어다 놓기)</div>
-<select id="side"><option value="0">둘 차례: 자동</option><option value="1">내 돌: 흑</option><option value="2">내 돌: 백</option></select>
-<div id="res">게임 화면 스크린샷을 붙여넣으세요</div>
+<h1>오목 AI (맥 미러링 · 실시간)</h1>
+<div class="controls">
+  <button id="startBtn" style="background:#007AFF;color:#fff">1. 미러링 창 선택</button>
+  <button id="reselectBtn" style="background:#333;color:#fff;display:none"></button>
+  <button id="autoBtn" style="background:#1c7c3a;color:#fff">자동 인식</button>
+  <button id="resetBtn" style="background:#444;color:#fff">영역 다시 그리기</button>
+  <label>흑 민감도 <input type="range" id="bk" min="10" max="60" value="20"></label>
+  <label>백 민감도 <input type="range" id="wk" min="20" max="120" value="70"></label>
+</div>
+<div id="status">준비 완료! 파란 버튼을 눌러주세요.</div>
 <div id="info"></div>
-<canvas id="cv" width="10" height="10"></canvas>
-<details><summary>인식이 이상하면 (민감도)</summary>
-<label>흑 민감도 <input type="range" id="bk" min="10" max="60" value="20"></label>
-<label>백 민감도 <input type="range" id="wk" min="20" max="120" value="70"></label></details>
+<div class="container"><video id="video" autoplay playsinline muted></video><canvas id="overlay"></canvas></div>
+<canvas id="hc" style="display:none"></canvas>
+
+<div id="stoneModal" class="modal-overlay">
+  <div class="modal-box">
+    <h2>당신은 어떤 돌인가요?</h2>
+    <p>선택한 돌 기준으로 내 차례를 판단하고 수를 추천합니다.</p>
+    <div class="modal-btns">
+      <button id="chooseBlack" class="m-btn" style="background:#000;color:#fff">⚫️ 흑돌 (선공)</button>
+      <button id="chooseWhite" class="m-btn" style="background:#fff;color:#000">⚪️ 백돌 (후공)</button>
+    </div>
+  </div>
+</div>
 
 <script>
+const $ = id => document.getElementById(id);
+const video = $('video'), canvas = $('overlay'), ctx = canvas.getContext('2d');
+const hc = $('hc'), hx = hc.getContext('2d', { willReadFrequently: true });
+const statusText = $('status'), info = $('info'), modal = $('stoneModal');
 const SIZE = 15;
+const board = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
+let myColor = null, bestMove = null, isMyTurn = false;
+let isDragging = false, dragStart = null, dragEnd = null, boardRect = null, isMatched = false;
+let pending = '', boardNorm = null, hover = null, moveKey = '';
 
-// ---------- 1. 바둑판 자동 인식 (격자선 15줄 등간격 + 교차점 2D 검증) ----------
-function detectBoard(g, W, H) {
+function say(t, cls = '') { statusText.className = cls; statusText.innerText = t; }
+
+function selectStone(c) {
+  myColor = c; modal.style.display = 'none';
+  const b = $('reselectBtn'); b.style.display = 'inline-block';
+  b.innerText = c === 1 ? '내 돌: [⚫️ 흑돌]' : '내 돌: [⚪️ 백돌]';
+  pending = ''; processGame();
+}
+$('chooseBlack').onclick = () => selectStone(1);
+$('chooseWhite').onclick = () => selectStone(2);
+$('reselectBtn').onclick = () => modal.style.display = 'flex';
+$('resetBtn').onclick = () => {
+  boardRect = boardNorm = null; isMatched = false; bestMove = null; pending = '';
+  say('돋보기를 보며 맨 바깥 격자선의 [좌상단 교차점]에서 [우하단 교차점]까지 드래그하세요!');
+};
+
+$('startBtn').onclick = async () => {
+  try {
+    if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+    video.srcObject = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    video.play(); boardRect = boardNorm = null; isMatched = false; pending = '';
+    say('🔍 바둑판을 자동 인식하는 중...');
+    video.onloadeddata = () => setTimeout(autoBoard, 800);
+  } catch (e) { alert('선택 취소 또는 에러: ' + e.message); }
+};
+
+const pos = e => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+canvas.onmousedown = e => { dragStart = dragEnd = pos(e); isDragging = true; isMatched = false; };
+canvas.onmousemove = e => { hover = pos(e); if (isDragging) dragEnd = hover; };
+canvas.onmouseleave = () => hover = null;
+canvas.onmouseup = () => {
+  if (!isDragging) return; isDragging = false;
+  const x = Math.min(dragStart.x, dragEnd.x), y = Math.min(dragStart.y, dragEnd.y);
+  const w = Math.abs(dragEnd.x - dragStart.x), h = Math.abs(dragEnd.y - dragStart.y);
+  if (w > 50 && h > 50) setBoardRect({ x, y, w, h });
+};
+
+
+function setBoardRect(rc) {
+  boardRect = rc; isMatched = true; pending = '';
+  boardNorm = { x: rc.x / canvas.width, y: rc.y / canvas.height, w: rc.w / canvas.width, h: rc.h / canvas.height };
+  if (!myColor) modal.style.display = 'flex'; else say('✅ 영역 설정 완료');
+}
+function autoBoard() {
+  if (!video.videoWidth) return;
+  canvas.width = video.clientWidth; canvas.height = video.clientHeight;
+  const r = detectBoard();
+  if (!r) { say('⚠️ 자동 인식 실패 — [영역 다시 그리기]로 직접 지정하세요 (돋보기 지원)'); return; }
+  const kx = video.videoWidth / video.clientWidth, ky = video.videoHeight / video.clientHeight;
+  setBoardRect({ x: r.x / kx, y: r.y / ky, w: r.w / kx, h: r.h / ky });
+}
+$('autoBtn').onclick = autoBoard;
+
+// 자동 인식: 격자선(밝기 능선)의 가로/세로 프로파일에서 '15개 등간격 선'을 찾고,
+// 교차점마다 가로·세로 선이 모두 지나가는지(2D 검증)로 패널 테두리와 실제 격자를 구분
+function detectBoard() {
+  const W = video.videoWidth, H = video.videoHeight;
+  hc.width = W; hc.height = H; hx.drawImage(video, 0, 0);
+  const d = hx.getImageData(0, 0, W, H).data, g = new Float32Array(W * H);
+  for (let i = 0, j = 0; i < d.length; i += 4, j++) g[j] = d[i] + d[i + 1] + d[i + 2];
   const Lx = (y, x) => Math.abs(2 * g[y * W + x] - g[y * W + x - 2] - g[y * W + x + 2]);
   const Ly = (y, x) => Math.abs(2 * g[y * W + x] - g[(y - 2) * W + x] - g[(y + 2) * W + x]);
   const Px = new Float32Array(W), Py = new Float32Array(H);
@@ -90,24 +170,110 @@ function detectBoard(g, W, H) {
   let best = null;
   for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) {
     const a = refine(Px, X.a + dx * X.b, X.b), c = refine(Py, Y.a + dy * Y.b, Y.b), sc = score(a.a, a.b, c.a, c.b);
-    if (!best || sc > best.sc) best = { sc, ax: a.a, bx: a.b, ay: c.a, by: c.b };
+    if (!best || sc > best.sc) best = { sc, x: a.a, y: c.a, w: 14 * a.b, h: 14 * c.b };
   }
   return best && best.sc / 225 > 40 ? best : null;
 }
 
-// ---------- 2. 돌 인식: 교차점 중심에서 대각선으로 떨어진 4곳의 밝기 (마지막 수 표시·격자선 회피) ----------
-function readStones(gr, W, b, bk, wk) {
-  const h = Math.max(1, Math.round(b.bx * 0.04)), off = Math.round(b.bx * 0.22), vals = [];
-  const patch = (x, y) => { let s = 0, n = 0; for (let yy = y - h; yy <= y + h; yy++) for (let xx = x - h; xx <= x + h; xx++) { s += gr[yy * W + xx]; n++; } return s / n; };
+function getCoord(r, c, rect = boardRect) {
+  return { x: rect.x + c * rect.w / (SIZE - 1), y: rect.y + r * rect.h / (SIZE - 1) };
+}
+
+// 돌 인식: 판 전체의 밝기 중앙값(=빈 교차점 기준)과 비교하는 상대 판별 (다크/라이트 판 모두 대응)
+function processGame() {
+  if (!isMatched || !myColor || !video.videoWidth) return;
+  if (hc.width !== video.videoWidth || hc.height !== video.videoHeight) { hc.width = video.videoWidth; hc.height = video.videoHeight; }
+  hx.drawImage(video, 0, 0);
+  const sx = video.videoWidth / video.clientWidth, sy = video.videoHeight / video.clientHeight;
+  // 교차점 중앙(격자선·마지막 수 표시 마커 위치)을 피해, 중심에서 대각선으로 떨어진 4곳을 샘플링
+  const stepPx = boardRect.w / (SIZE - 1) * sx, h = Math.max(1, Math.round(stepPx * 0.04)), off = Math.round(stepPx * 0.22), m = off + h;
+  const vals = [];
   for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
-    const x = Math.round(b.ax + c * b.bx), y = Math.round(b.ay + r * b.by);
-    const q = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sy]) => patch(x + sx * off, y + sy * off)).sort((p, q2) => p - q2);
-    vals.push((q[1] + q[2]) / 2);
+    const p = getCoord(r, c), px = Math.round(p.x * sx), py = Math.round(p.y * sy);
+    if (px < m || py < m || px >= hc.width - m || py >= hc.height - m) { vals.push(null); continue; }
+    const q = [];
+    for (const [ax, ay] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const d = hx.getImageData(px + ax * off - h, py + ay * off - h, 2 * h + 1, 2 * h + 1).data;
+      let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] + d[i + 1] + d[i + 2];
+      q.push(s / (d.length / 4 * 3));
+    }
+    q.sort((a, b) => a - b);
+    vals.push((q[1] + q[2]) / 2); // 중간 두 값 평균: 돌의 하이라이트 같은 튀는 값 제거
   }
-  const med = [...vals].sort((p, q) => p - q)[vals.length >> 1];
-  const board = Array.from({ length: SIZE }, () => Array(SIZE).fill(0));
-  vals.forEach((v, i) => { board[i / SIZE | 0][i % SIZE] = v < med - bk ? 1 : v > med + wk ? 2 : 0; });
-  return board;
+  const sorted = vals.filter(v => v !== null).sort((a, b) => a - b);
+  const med = sorted[sorted.length >> 1];
+  const kb = +$('bk').value, kw = +$('wk').value;
+  const raw = vals.map(v => v === null ? 0 : v < med - kb ? 1 : v > med + kw ? 2 : 0);
+  const sig = raw.join('');
+  if (sig !== pending) { pending = sig; return; } // 연속 2회 같은 결과일 때만 반영 (애니메이션 오인식 방지)
+  let bc = 0, wc = 0;
+  raw.forEach((v, i) => { board[i / SIZE | 0][i % SIZE] = v; if (v === 1) bc++; else if (v === 2) wc++; });
+  info.innerText = `빈칸 기준 밝기 ${med.toFixed(0)} · 흑 ${bc} · 백 ${wc}`;
+
+  const diff = bc - wc;
+  if (diff < 0 || diff > 1) { isMyTurn = false; bestMove = null; say('⚠️ 돌 인식이 불안정합니다. 영역/민감도를 조정하세요.', 'opp-turn'); return; }
+  isMyTurn = myColor === 1 ? diff === 0 : diff === 1;
+  if (isMyTurn) {
+    const key = sig + myColor;
+    if (key !== moveKey) { moveKey = key; bestMove = computeMove(board, myColor); }
+    const m = bestMove;
+    say(m ? `⚡️ 위에서 ${m.r + 1}번째, 왼쪽에서 ${m.c + 1}번째에 두세요!${m.why ? ' — ' + m.why : ''}` : '⚡️ 둘 곳을 찾지 못했어요', 'my-turn');
+  } else {
+    bestMove = null; moveKey = '';
+    say('⏳ 상대방이 생각 중입니다...', 'opp-turn');
+  }
+}
+
+function renderLoop() {
+  if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
+    canvas.width = video.clientWidth; canvas.height = video.clientHeight;
+    if (boardNorm) boardRect = { x: boardNorm.x * canvas.width, y: boardNorm.y * canvas.height, w: boardNorm.w * canvas.width, h: boardNorm.h * canvas.height };
+  }
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (isDragging && dragStart && dragEnd) {
+    const rc = { x: Math.min(dragStart.x, dragEnd.x), y: Math.min(dragStart.y, dragEnd.y), w: Math.abs(dragEnd.x - dragStart.x), h: Math.abs(dragEnd.y - dragStart.y) };
+    ctx.strokeStyle = '#007AFF'; ctx.lineWidth = 2; ctx.strokeRect(rc.x, rc.y, rc.w, rc.h);
+    ctx.strokeStyle = 'rgba(0,122,255,.5)'; ctx.lineWidth = 1;
+    for (let i = 0; i < SIZE; i++) {
+      const a = getCoord(0, i, rc), b = getCoord(SIZE - 1, i, rc), c = getCoord(i, 0, rc), d = getCoord(i, SIZE - 1, rc);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.moveTo(c.x, c.y); ctx.lineTo(d.x, d.y); ctx.stroke();
+    }
+  }
+  if (boardRect && isMatched) {
+    const rad = boardRect.w / (SIZE - 1) * 0.3;
+    for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
+      const p = getCoord(r, c), v = board[r][c];
+      ctx.beginPath();
+      if (v) { ctx.fillStyle = v === 1 ? '#000' : '#fff'; ctx.strokeStyle = '#00ffff'; ctx.lineWidth = 2; ctx.arc(p.x, p.y, rad, 0, 7); ctx.fill(); ctx.stroke(); }
+      else { ctx.fillStyle = 'rgba(0,255,120,.5)'; ctx.arc(p.x, p.y, 2, 0, 7); ctx.fill(); }
+    }
+    ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.font = '11px sans-serif'; ctx.textAlign = 'center';
+    for (let i = 0; i < SIZE; i++) {
+      const t = getCoord(0, i), l = getCoord(i, 0);
+      ctx.fillText(i + 1, t.x, t.y - 8); ctx.fillText(i + 1, l.x - 12, l.y + 4);
+    }
+    if (bestMove && isMyTurn) {
+      const p = getCoord(bestMove.r, bestMove.c), pulse = (Math.sin(Date.now() / 180) + 1) / 2, a = .4 + pulse * .6;
+      ctx.strokeStyle = `rgba(255,30,30,${a})`; ctx.lineWidth = 3.5;
+      ctx.beginPath(); ctx.arc(p.x, p.y, rad + 2 + pulse * 12, 0, 7); ctx.stroke();
+      ctx.fillStyle = '#ff0033'; ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, 7); ctx.fill();
+      ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#ffeb3b'; ctx.textAlign = 'left';
+      ctx.fillText(`(${bestMove.r + 1}, ${bestMove.c + 1})`, p.x + rad + 14, p.y - rad - 6);
+    }
+  }
+  if (hover && !isMatched && video.videoWidth) { // 돋보기
+    const R = 70, Z = 4, kx = video.videoWidth / video.clientWidth, ky = video.videoHeight / video.clientHeight;
+    const cx = hover.x < canvas.width / 2 ? hover.x + R + 30 : hover.x - R - 30;
+    const cy = hover.y > R + 40 ? hover.y - R - 30 : hover.y + R + 30;
+    ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.clip();
+    ctx.fillStyle = '#000'; ctx.fillRect(cx - R, cy - R, 2 * R, 2 * R);
+    ctx.drawImage(video, (hover.x - R / Z) * kx, (hover.y - R / Z) * ky, 2 * R / Z * kx, 2 * R / Z * ky, cx - R, cy - R, 2 * R, 2 * R);
+    ctx.restore();
+    ctx.strokeStyle = '#007AFF'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 7); ctx.stroke();
+    ctx.strokeStyle = '#ff3b30'; ctx.lineWidth = 1; ctx.beginPath();
+    ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R); ctx.stroke();
+  }
+  requestAnimationFrame(renderLoop);
 }
 
 // ---------- 3. 추천 수 (5칸 윈도우 패턴 점수, 띈 3/4 및 4-3·3-3 보너스) ----------
@@ -180,7 +346,7 @@ function vcf(board, me, depth, budget) {
   }
   return null;
 }
-function bestMove(board, me) {
+function computeMove(board, me) {
   const op = 3 - me;
   if (board.every(row => row.every(v => !v))) return { r: 7, c: 7 };
   let f = fiveCells(board, me); if (f.length) return { ...f[0], why: '바로 이기는 수!' };
@@ -199,89 +365,9 @@ function bestMove(board, me) {
   return cands[0];
 }
 
-// ---------- 4. 전체 처리 ----------
-function analyze(d, W, H, forced, bk, wk) {
-  const g = new Float32Array(W * H), gr = new Float32Array(W * H);
-  for (let i = 0, j = 0; i < d.length; i += 4, j++) { const s = d[i] + d[i + 1] + d[i + 2]; g[j] = s; gr[j] = s / 3; }
-  const box = detectBoard(g, W, H);
-  if (!box) return { msg: '바둑판을 찾지 못했어요. 게임 화면 전체가 나온 스크린샷을 선택하세요.' };
-  const board = readStones(gr, W, box, bk, wk);
-  let bc = 0, wc = 0; board.forEach(row => row.forEach(v => { if (v === 1) bc++; else if (v === 2) wc++; }));
-  const info = `흑 ${bc} · 백 ${wc}`;
-  const diff = bc - wc;
-  if (diff < 0 || diff > 1) return { msg: '돌 인식이 불안정해요. 민감도를 조정하거나 다시 찍어 주세요.', info, box };
-  const me = forced || (diff === 0 ? 1 : 2);
-  const mv = bestMove(board, me);
-  return { msg: `${me === 1 ? '흑' : '백'} 차례: 위에서 ${mv.r + 1}번째, 왼쪽에서 ${mv.c + 1}번째 줄${mv.why ? ' — ' + mv.why : ''}`, info, box, mv, board };
-}
 
-// ---------- UI ----------
-if (typeof document !== 'undefined') {
-  const $ = id => document.getElementById(id), cv = $('cv'), cx = cv.getContext('2d', { willReadFrequently: true });
-  let last = null;
-  const run = () => {
-    if (!last) return;
-    const { W, H, data } = last;
-    $('res').innerText = '분석 중...';
-    setTimeout(() => {
-      const r = analyze(data, W, H, +$('side').value, +$('bk').value, +$('wk').value);
-      $('res').innerText = r.msg; $('info').innerText = r.info || '';
-      cx.putImageData(new ImageData(new Uint8ClampedArray(data), W, H), 0, 0);
-      if (r.mv) {
-        const x = r.box.ax + r.mv.c * r.box.bx, y = r.box.ay + r.mv.r * r.box.by, R = r.box.bx * 0.45;
-        cx.strokeStyle = '#ff2030'; cx.lineWidth = Math.max(4, r.box.bx * 0.1);
-        cx.beginPath(); cx.arc(x, y, R, 0, 7); cx.stroke();
-        cx.fillStyle = 'rgba(255,32,48,.35)'; cx.fill();
-      }
-    }, 30);
-  };
-  const setSource = (src, w, h) => {
-    cv.width = w; cv.height = h; cx.drawImage(src, 0, 0);
-    last = { W: w, H: h, data: cx.getImageData(0, 0, w, h).data }; run();
-  };
-  const loadBlob = blob => {
-    const img = new Image();
-    img.onload = () => { setSource(img, img.naturalWidth, img.naturalHeight); URL.revokeObjectURL(img.src); };
-    img.onerror = () => { $('res').innerText = '이미지를 열 수 없어요.'; };
-    img.src = URL.createObjectURL(blob);
-  };
-  // 1) 클립보드 붙여넣기 버튼 (아이폰: '복사 및 삭제'로 복사한 스크린샷)
-  $('paste').onclick = async () => {
-    try {
-      for (const it of await navigator.clipboard.read()) {
-        const t = it.types.find(x => x.startsWith('image/'));
-        if (t) { loadBlob(await it.getType(t)); return; }
-      }
-      $('res').innerText = '클립보드에 이미지가 없어요. 스크린샷을 먼저 복사하세요.';
-    } catch (e) { $('res').innerText = '붙여넣기가 허용되지 않았어요. 뜨는 "붙여넣기" 버튼을 눌러 주세요.'; }
-  };
-  // 2) ⌘V / 길게 눌러 붙여넣기, 3) 파일 끌어다 놓기
-  document.addEventListener('paste', e => {
-    const it = [...(e.clipboardData ? e.clipboardData.items : [])].find(i => i.type.startsWith('image/'));
-    if (it) { e.preventDefault(); loadBlob(it.getAsFile()); }
-  });
-  addEventListener('dragover', e => e.preventDefault());
-  addEventListener('drop', e => { e.preventDefault(); const f = [...e.dataTransfer.files].find(x => x.type.startsWith('image/')); if (f) loadBlob(f); });
-  // 4) 맥/PC: 화면에서 바로 캡처 (아이폰 사파리는 미지원이라 버튼이 숨겨짐)
-  if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
-    $('cap').style.display = 'inline-block';
-    $('cap').onclick = async () => {
-      try {
-        const st = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-        const v = document.createElement('video'); v.srcObject = st; v.muted = true; await v.play();
-        await new Promise(r => setTimeout(r, 400));
-        const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
-        c.getContext('2d').drawImage(v, 0, 0); st.getTracks().forEach(t => t.stop());
-        setSource(c, c.width, c.height);
-      } catch (e) { $('res').innerText = '화면 캡처가 취소되었어요.'; }
-    };
-  }
-  // 5) 파일 선택 (보조)
-  $('pick').onclick = () => $('f').click();
-  $('f').onchange = e => { if (e.target.files[0]) loadBlob(e.target.files[0]); e.target.value = ''; };
-  ['side', 'bk', 'wk'].forEach(id => $(id).onchange = run);
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
-}
+setInterval(processGame, 300);
+requestAnimationFrame(renderLoop);
 </script>
 </body>
 </html>
