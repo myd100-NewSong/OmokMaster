@@ -129,19 +129,71 @@ function evalCell(board, r, c, me, op) {
   if (fours >= 2 || (fours && threes)) s += 20000; else if (threes >= 2) s += 3000;
   return s;
 }
+const inb = (r, c) => r >= 0 && r < SIZE && c >= 0 && c < SIZE;
+const nearStone = (board, r, c, d) => { for (let i = -d; i <= d; i++) for (let j = -d; j <= d; j++) if (inb(r + i, c + j) && board[r + i][c + j]) return true; return false; };
+// (r,c)에 color 돌을 둔다고 가정했을 때: 5목 완성 여부, 다음 수에 5목이 되는 칸 목록(=4가 만들어지면 생김)
+function lineInfo(board, r, c, color) {
+  const op = 3 - color, wins = new Set(); let five = false;
+  for (const [dr, dc] of DIRS) for (let st = -4; st <= 0; st++) {
+    let own = 0, ne = 0, empty = -1, ok = true;
+    for (let k = st; k <= st + 4; k++) {
+      const nr = r + dr * k, nc = c + dc * k;
+      if (!inb(nr, nc)) { ok = false; break; }
+      const v = k === 0 ? color : board[nr][nc];
+      if (v === op) { ok = false; break; }
+      if (v === color) own++; else { ne++; empty = nr * SIZE + nc; }
+    }
+    if (!ok) continue;
+    if (own === 5) five = true; else if (own === 4 && ne === 1) wins.add(empty);
+  }
+  return { five, wins: [...wins] };
+}
+function fiveCells(board, color) {
+  const out = [];
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++)
+    if (!board[r][c] && nearStone(board, r, c, 1) && lineInfo(board, r, c, color).five) out.push({ r, c });
+  return out;
+}
+// VCF: '4'만 연속으로 두어(상대는 막을 수밖에 없음) 이기는 수순 탐색
+function vcf(board, me, depth, budget) {
+  const op = 3 - me;
+  if (fiveCells(board, op).length) { const f = fiveCells(board, me); return f.length ? f[0] : null; }
+  if (depth <= 0) return null;
+  for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
+    if (board[r][c] || !nearStone(board, r, c, 2)) continue;
+    if (--budget.n < 0) return null;
+    const li = lineInfo(board, r, c, me);
+    if (li.five) return { r, c };
+    if (!li.wins.length) continue;
+    board[r][c] = me;
+    let win = false;
+    if (li.wins.length >= 2) win = fiveCells(board, op).length === 0;
+    else if (!fiveCells(board, op).length) {
+      const wr = li.wins[0] / SIZE | 0, wc = li.wins[0] % SIZE;
+      if (!lineInfo(board, wr, wc, op).five) { board[wr][wc] = op; win = !!vcf(board, me, depth - 1, budget); board[wr][wc] = 0; }
+    }
+    board[r][c] = 0;
+    if (win) return { r, c };
+  }
+  return null;
+}
 function bestMove(board, me) {
   const op = 3 - me;
   if (board.every(row => row.every(v => !v))) return { r: 7, c: 7 };
-  const near = (r, c) => { for (let i = -2; i <= 2; i++) for (let j = -2; j <= 2; j++) { const a = r + i, b = c + j; if (a >= 0 && a < SIZE && b >= 0 && b < SIZE && board[a][b]) return true; } return false; };
-  let best = null, bs = -1;
+  let f = fiveCells(board, me); if (f.length) return { ...f[0], why: '바로 이기는 수!' };
+  f = fiveCells(board, op); if (f.length) return { ...f[0], why: '상대 5목 차단' };
+  const win = vcf(board, me, 10, { n: 40000 }); if (win) return { ...win, why: '이기는 수순 발견 (4를 연속으로 두세요)' };
+  const cands = [];
   for (let r = 0; r < SIZE; r++) for (let c = 0; c < SIZE; c++) {
-    if (board[r][c] || !near(r, c)) continue;
-    const a = evalCell(board, r, c, me, op);
-    if (a >= 1e6) return { r, c };
-    const t = a + evalCell(board, r, c, op, me) * 1.05 + (14 - Math.abs(r - 7) - Math.abs(c - 7)) * 0.2;
-    if (t > bs) { bs = t; best = { r, c }; }
+    if (board[r][c] || !nearStone(board, r, c, 2)) continue;
+    cands.push({ r, c, t: evalCell(board, r, c, me, op) * 1.25 + evalCell(board, r, c, op, me) + (14 - Math.abs(r - 7) - Math.abs(c - 7)) * 0.2 });
   }
-  return best;
+  cands.sort((a, b) => b.t - a.t);
+  for (const m of cands.slice(0, 10)) {            // 내가 둔 뒤 상대가 4연속으로 이기는 수순이 생기면 피한다
+    board[m.r][m.c] = me; const bad = vcf(board, op, 8, { n: 15000 }); board[m.r][m.c] = 0;
+    if (!bad) return m;
+  }
+  return cands[0];
 }
 
 // ---------- 4. 전체 처리 ----------
@@ -157,7 +209,7 @@ function analyze(d, W, H, forced, bk, wk) {
   if (diff < 0 || diff > 1) return { msg: '돌 인식이 불안정해요. 민감도를 조정하거나 다시 찍어 주세요.', info, box };
   const me = forced || (diff === 0 ? 1 : 2);
   const mv = bestMove(board, me);
-  return { msg: `${me === 1 ? '흑' : '백'} 차례: 위에서 ${mv.r + 1}번째, 왼쪽에서 ${mv.c + 1}번째 줄`, info, box, mv, board };
+  return { msg: `${me === 1 ? '흑' : '백'} 차례: 위에서 ${mv.r + 1}번째, 왼쪽에서 ${mv.c + 1}번째 줄${mv.why ? ' — ' + mv.why : ''}`, info, box, mv, board };
 }
 
 // ---------- UI ----------
