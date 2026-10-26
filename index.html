@@ -212,7 +212,7 @@ function processGame() {
   if (sig !== pending) { pending = sig; return; } // 연속 2회 같은 결과일 때만 반영 (애니메이션 오인식 방지)
   let bc = 0, wc = 0;
   raw.forEach((v, i) => { board[i / SIZE | 0][i % SIZE] = v; if (v === 1) bc++; else if (v === 2) wc++; });
-  info.innerText = `빈칸 기준 밝기 ${med.toFixed(0)} · 흑 ${bc} · 백 ${wc}`;
+  info.style.color = ''; info.innerText = `빈칸 기준 밝기 ${med.toFixed(0)} · 흑 ${bc} · 백 ${wc}`;
 
   const diff = bc - wc;
   const valid = diff === 0 || diff === 1;            // 정상: 흑이 백과 같거나 1개 많음
@@ -230,7 +230,7 @@ function processGame() {
   }
 }
 
-function renderLoop() {
+function drawFrame() {
   if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
     canvas.width = video.clientWidth; canvas.height = video.clientHeight;
     if (boardNorm) boardRect = { x: boardNorm.x * canvas.width, y: boardNorm.y * canvas.height, w: boardNorm.w * canvas.width, h: boardNorm.h * canvas.height };
@@ -266,14 +266,12 @@ function renderLoop() {
       ctx.fillStyle = '#ff0033'; ctx.beginPath(); ctx.arc(p.x, p.y, 5, 0, 7); ctx.fill();
       ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#ffeb3b'; ctx.textAlign = 'left';
       ctx.fillText(`(${bestMove.r + 1}, ${bestMove.c + 1})`, p.x + rad + 14, p.y - rad - 6);
-      // 마우스가 추천 자리(한 칸 범위)에 올라가면 "OK" 알림
+      // 마우스가 추천 자리(한 칸 범위)에 올라가면 바둑판 위에 "OK" 글자 표시
       if (hover && Math.hypot(hover.x - p.x, hover.y - p.y) < boardRect.w / (SIZE - 1) * 0.5) {
-        const bw = 78, bh = 32, bx = p.x - bw / 2, by = p.y - rad - 22 - bh;
-        ctx.fillStyle = '#34c759'; ctx.fillRect(bx, by, bw, bh);
-        ctx.beginPath(); ctx.moveTo(p.x - 7, by + bh); ctx.lineTo(p.x + 7, by + bh); ctx.lineTo(p.x, by + bh + 8); ctx.fill();
-        ctx.fillStyle = '#fff'; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'center';
-        ctx.fillText('OK ✓', p.x, by + 23);
-        canvas.style.cursor = 'pointer';
+        ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.lineWidth = 5; ctx.strokeStyle = '#000'; ctx.strokeText('OK', p.x, p.y);
+        ctx.fillStyle = '#34ff7a'; ctx.fillText('OK', p.x, p.y);
+        ctx.textBaseline = 'alphabetic'; canvas.style.cursor = 'pointer';
       }
     }
   }
@@ -289,8 +287,10 @@ function renderLoop() {
     ctx.strokeStyle = '#ff3b30'; ctx.lineWidth = 1; ctx.beginPath();
     ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R); ctx.stroke();
   }
-  requestAnimationFrame(renderLoop);
 }
+function showErr(e) { console.error(e); info.style.color = '#ff6b6b'; info.innerText = '⚠️ 오류: ' + (e && e.message ? e.message : e); }
+function renderLoop() { try { drawFrame(); } catch (e) { showErr(e); } requestAnimationFrame(renderLoop); }
+addEventListener('error', e => showErr(e.error || e.message));
 
 // ---------- 3. 추천 수 (5칸 윈도우 패턴 점수, 띈 3/4 및 4-3·3-3 보너스) ----------
 const W5 = [0, 1, 10, 100, 1500, 1e6], DIRS = [[1, 0], [0, 1], [1, 1], [1, -1]];
@@ -382,7 +382,7 @@ function computeMove(board, me) {
 }
 
 
-setInterval(processGame, 200);
+setInterval(() => { try { processGame(); } catch (e) { showErr(e); } }, 200);
 requestAnimationFrame(renderLoop);
 </script>
 </body>
